@@ -1,0 +1,2 @@
+mkdir -p "$DESTDIR/usr/bin"
+echo b > "$DESTDIR/usr/bin/nano-b"

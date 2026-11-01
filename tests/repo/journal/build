@@ -1,0 +1,2 @@
+mkdir -p "$DESTDIR/usr/share/journal"
+echo "$version" > "$DESTDIR/usr/share/journal/v$version"

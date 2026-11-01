@@ -1,0 +1,3 @@
+name = busysh
+version = 1
+provides = sh

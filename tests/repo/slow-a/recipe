@@ -1,0 +1,3 @@
+name = slow-a
+version = 1
+description = Takes 2 seconds to build

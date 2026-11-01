@@ -1,0 +1,4 @@
+name = needs-sh
+version = 1
+description = Depends on the virtual package sh
+depends = sh

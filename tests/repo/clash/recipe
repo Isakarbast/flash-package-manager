@@ -1,0 +1,4 @@
+name        = clash
+version     = 1.0
+release     = 1
+description = Ships a file that hello already owns

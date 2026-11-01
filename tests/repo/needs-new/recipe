@@ -1,0 +1,3 @@
+name = needs-new
+version = 1
+depends = greet-data>=9

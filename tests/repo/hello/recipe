@@ -1,0 +1,8 @@
+name        = hello
+version     = 1.0
+release     = 1
+description = Prints a greeting
+license     = MIT
+depends     = greet-data
+source      = hello.c hello.conf
+sha256      = 22e9c9633dff79bfd60353165b373f6c32af5e93bacc821d2763628a5fe1c10e 4c6385e8d46d8840f22d592947d424ec537ce4bd876932000342558571d2af1f

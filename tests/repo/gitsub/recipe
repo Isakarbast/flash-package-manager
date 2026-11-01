@@ -1,0 +1,5 @@
+# @GITURL@ and @COMMIT@ are filled in by tests/run.sh
+name    = gitsub
+version = 1
+source  = git+@GITURL@#commit=@COMMIT@
+sha256  = SKIP

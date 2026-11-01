@@ -1,0 +1,2 @@
+mkdir -p "$DESTDIR/usr/share/greet"
+echo "Hello from fpm" > "$DESTDIR/usr/share/greet/message"

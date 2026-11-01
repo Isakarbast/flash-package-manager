@@ -1,0 +1,3 @@
+name = cyc-b
+version = 1
+depends = cyc-a

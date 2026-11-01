@@ -1,0 +1,2 @@
+mkdir -p "$ROOT/var/lib/hello"
+echo installed > "$ROOT/var/lib/hello/hook-ran"

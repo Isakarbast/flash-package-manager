@@ -1,0 +1,3 @@
+name = libgreet
+version = 1
+description = Shared library used by greeter

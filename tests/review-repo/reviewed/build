@@ -1,0 +1,2 @@
+mkdir -p "$DESTDIR/usr/share/reviewed"
+echo ok > "$DESTDIR/usr/share/reviewed/ok"

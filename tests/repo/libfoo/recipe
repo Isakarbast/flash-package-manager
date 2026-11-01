@@ -1,0 +1,7 @@
+name        = libfoo
+version     = 1.0
+description = Example library
+libfoo-dev.description = Headers for libfoo
+libfoo-dev.depends     = libfoo
+libfoo-dev.files       = usr/include usr/lib/*.a
+libfoo-doc.files       = usr/share/doc

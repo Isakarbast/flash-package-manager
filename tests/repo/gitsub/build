@@ -1,0 +1,1 @@
+install -Dm644 parentsrc/sub/sub.txt "$DESTDIR/usr/share/gitsub/sub.txt"

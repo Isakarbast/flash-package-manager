@@ -1,0 +1,5 @@
+mkdir -p "$DESTDIR/usr/lib" "$DESTDIR/usr/include" "$DESTDIR/usr/share/doc/libfoo"
+echo lib > "$DESTDIR/usr/lib/libfoo.so.1"
+echo archive > "$DESTDIR/usr/lib/libfoo.a"
+echo header > "$DESTDIR/usr/include/foo.h"
+echo docs > "$DESTDIR/usr/share/doc/libfoo/README"

@@ -1,0 +1,2 @@
+mkdir -p "$DESTDIR/usr/share/stubborn"
+echo x > "$DESTDIR/usr/share/stubborn/x"

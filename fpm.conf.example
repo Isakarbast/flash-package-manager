@@ -1,0 +1,40 @@
+# /etc/fpm.conf
+
+# Compiler flags for every build. Packages built on this machine may use
+# -march=native; for packages you publish, use a portable target such as
+# -march=x86-64-v2.
+cflags = -O2 -pipe -march=native
+# cxxflags defaults to cflags
+ldflags = -Wl,-O1,--as-needed
+
+# make -j value for each build; 0 = number of CPUs.
+jobs = 0
+
+# How many packages may build at the same time (peak load = parallel x jobs).
+parallel = 2
+
+# Run build scripts in bubblewrap (read-only system, no network): auto, yes, no.
+sandbox = auto
+
+# When a binary and a recipe have the same version: binary or source.
+prefer = binary
+
+# Shared libraries to treat as always present (e.g. while bootstrapping a
+# system whose C library isn't managed by fpm yet).
+# shlib_ignore = libc.so.6
+
+# Download through a proxy, e.g. i2pd's HTTP proxy or Tor's SOCKS port.
+# proxy = http://127.0.0.1:4444
+# proxy = socks5h://127.0.0.1:9050
+
+# Binary repositories, searched in order.
+#[repo main]
+#url = https://pkgs.example.org/x86_64
+#key = /etc/fpm/keys/main.pub
+
+# Recipe repositories, searched in order.
+[recipes main]
+path = /var/db/fpm/recipes/main
+# git = https://git.example.org/recipes.git
+# review = yes
+# require_signed = yes

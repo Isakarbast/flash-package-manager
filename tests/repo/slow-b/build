@@ -1,0 +1,3 @@
+sleep 2
+mkdir -p "$DESTDIR/usr/share/slow"
+echo b > "$DESTDIR/usr/share/slow/b"

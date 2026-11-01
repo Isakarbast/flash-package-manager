@@ -1,0 +1,3 @@
+printf 'const char *greet(void) { return "hi"; }\n' > greet.c
+cc -shared -fPIC -Wl,-soname,libgreet.so.$version -o libgreet.so.$version greet.c
+install -Dm755 libgreet.so.$version "$DESTDIR/usr/lib/libgreet.so.$version"

@@ -1,0 +1,6 @@
+# Data-only package with no sources.
+name        = greet-data
+version     = 1.0
+release     = 1
+description = Greeting text used by hello
+license     = MIT

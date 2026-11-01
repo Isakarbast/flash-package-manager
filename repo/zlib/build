@@ -1,0 +1,5 @@
+cd "zlib-$version"
+./configure --prefix=/usr
+make
+make install DESTDIR="$DESTDIR"
+rm -f "$DESTDIR/usr/lib/libz.a"

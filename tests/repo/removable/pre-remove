@@ -1,0 +1,3 @@
+# Runs before any file is removed, so the data is still there.
+test -f "$ROOT/usr/share/removable/data"
+echo before > "$ROOT/var/pre-remove-ran"

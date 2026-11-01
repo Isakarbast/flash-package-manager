@@ -1,0 +1,3 @@
+cc $CFLAGS $LDFLAGS -DVERSION="\"$version\"" -o hello hello.c
+install -Dm755 hello "$DESTDIR/usr/bin/hello"
+install -Dm644 hello.conf "$DESTDIR/etc/hello.conf"

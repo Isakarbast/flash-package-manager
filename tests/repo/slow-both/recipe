@@ -1,0 +1,4 @@
+name = slow-both
+version = 1
+description = Metapackage
+depends = slow-a slow-b

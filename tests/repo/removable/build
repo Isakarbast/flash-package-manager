@@ -1,0 +1,2 @@
+mkdir -p "$DESTDIR/usr/share/removable"
+echo data > "$DESTDIR/usr/share/removable/data"

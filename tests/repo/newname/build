@@ -1,0 +1,2 @@
+mkdir -p "$DESTDIR/usr/bin"
+echo new > "$DESTDIR/usr/bin/tool"

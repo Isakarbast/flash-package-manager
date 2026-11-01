@@ -1,0 +1,1 @@
+install -Dm644 gitsrc/greeting.txt "$DESTDIR/usr/share/gitpkg/greeting.txt"

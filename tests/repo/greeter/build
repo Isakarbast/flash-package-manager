@@ -1,0 +1,6 @@
+# Link against a stub with the same soname; the real library comes from libgreet.
+printf 'const char *greet(void) { return ""; }\n' > stub.c
+cc -shared -fPIC -Wl,-soname,libgreet.so.1 -o libgreet.so stub.c
+printf '#include <stdio.h>\nconst char *greet(void);\nint main(void) { puts(greet()); return 0; }\n' > main.c
+cc -o greeter main.c -L. -lgreet
+install -Dm755 greeter "$DESTDIR/usr/bin/greeter"

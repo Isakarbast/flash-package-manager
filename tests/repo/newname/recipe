@@ -1,0 +1,3 @@
+name = newname
+version = 1
+replaces = oldname

@@ -1,0 +1,2 @@
+mkdir -p "$DESTDIR/usr/bin"
+echo "#!/bin/sh" > "$DESTDIR/usr/bin/busysh"

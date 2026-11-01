@@ -1,0 +1,3 @@
+name = nano-b
+version = 1
+conflicts = nano-a

@@ -1,0 +1,2 @@
+echo "refusing to go" >&2
+exit 1
