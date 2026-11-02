@@ -51,6 +51,7 @@ static void usage(FILE *f)
           "  -y, --yes          don't ask for confirmation\n"
           "  -n, --dry-run      show what would happen, change nothing\n"
           "  -f, --force        override conflicts and safety checks\n"
+          "  --overwrite        replace existing files that no package owns\n"
           "  -S, --source       build from recipes even when a binary exists\n"
           "  -P, --parallel N   build up to N packages at the same time\n"
           "  --reinstall        reinstall targets that are already up to date\n"
@@ -838,10 +839,9 @@ static int cmd_files(const char *name)
     return 0;
 }
 
-static int cmd_owner(const char *path)
+/* Prints the package owning rel (relative to the root); 0 if there is one. */
+static int owner_of(const char *shown, const char *rel)
 {
-    while (*path == '/')
-        path++;
     strvec names = {0};
     db_list(&C, &names);
     int found = 0;
@@ -849,22 +849,50 @@ static int cmd_owner(const char *path)
         manifest m;
         if (manifest_read(&C, names.v[i], &m))
             continue;
-        const mentry *e = manifest_find(&m, path);
+        const mentry *e = manifest_find(&m, rel);
         if (e && e->type != 'd') {
             pkg p;
             db_get(&C, names.v[i], &p);
-            printf("/%s is owned by %s %s-%d\n", path, p.name, p.version, p.release);
+            printf("/%s is owned by %s %s-%d\n", shown, p.name, p.version, p.release);
             pkg_free(&p);
             found = 1;
         }
         manifest_free(&m);
     }
     sv_free(&names);
-    if (!found) {
-        printf("/%s is not owned by any package\n", path);
-        return 1;
+    return found ? 0 : -1;
+}
+
+static int cmd_owner(const char *path)
+{
+    while (*path == '/')
+        path++;
+    if (owner_of(path, path) == 0)
+        return 0;
+    /* The directory may be a symlink, e.g. /usr/sbin -> bin on a merged-/usr
+     * system: look the file up under the directory's real path too. */
+    const char *slash = strrchr(path, '/');
+    if (slash) {
+        char *dir = strndup(path, (size_t)(slash - path));
+        char *full = rpath(&C, dir), real[PATH_MAX];
+        size_t rl = strcmp(C.root, "/") ? strlen(C.root) : 0;
+        int rc = -1;
+        if (realpath(full, real) && !strncmp(real, C.root, rl) && (real[rl] == '/' || !real[rl])) {
+            const char *rdir = real + rl;
+            while (*rdir == '/')
+                rdir++;
+            char *rel = *rdir ? xasprintf("%s%s", rdir, slash) : xstrdup(slash + 1);
+            if (strcmp(rel, path))
+                rc = owner_of(path, rel);
+            free(rel);
+        }
+        free(dir);
+        free(full);
+        if (rc == 0)
+            return 0;
     }
-    return 0;
+    printf("/%s is not owned by any package\n", path);
+    return 1;
 }
 
 static int cmd_deps(const char *name)
@@ -1008,6 +1036,8 @@ int main(int argc, char **argv)
             C.dry_run = 1;
         } else if (!strcmp(a, "-f") || !strcmp(a, "--force")) {
             C.force = 1;
+        } else if (!strcmp(a, "--overwrite")) {
+            C.overwrite = 1;
         } else if (!strcmp(a, "-S") || !strcmp(a, "--source")) {
             C.source_only = 1;
         } else if (!strcmp(a, "--reinstall")) {

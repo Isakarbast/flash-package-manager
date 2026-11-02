@@ -1,0 +1,4 @@
+name        = adopt
+version     = 1.0
+release     = 1
+description = Ships a file that already exists untracked on disk

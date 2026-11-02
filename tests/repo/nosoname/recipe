@@ -1,0 +1,4 @@
+name        = nosoname
+version     = 1.0
+release     = 1
+description = A program and its private library built without -soname (like perl)

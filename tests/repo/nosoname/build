@@ -1,0 +1,6 @@
+printf 'int answer(void) { return 42; }\n' > lib.c
+printf 'int answer(void);\nint main(void) { return answer() == 42 ? 0 : 1; }\n' > main.c
+cc -shared -fPIC -o libnoso.so lib.c
+cc -o nosoname main.c -L. -lnoso -Wl,-rpath,/usr/lib/nosoname
+install -Dm755 libnoso.so "$DESTDIR/usr/lib/nosoname/libnoso.so"
+install -Dm755 nosoname "$DESTDIR/usr/bin/nosoname"

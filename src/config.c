@@ -107,6 +107,11 @@ static int global_kv(config *c, const char *k, const char *v)
         c->prefer_source = !strcmp(v, "source");
     } else if (!strcmp(k, "shlib_ignore")) {
         sv_split(&c->shlib_ignore, v);
+    } else if (!strcmp(k, "usrmerge")) {
+        c->usrmerge = yes(v);
+    } else if (!strcmp(k, "purge")) {
+        sv_split(&c->purge, v);
+        c->purge_set = 1;
     } else {
         warnf("%s: unknown setting '%s' ignored", c->conf, k);
     }
@@ -214,6 +219,8 @@ void config_load(config *c, int conf_given)
 
     if (!c->cxxflags)
         c->cxxflags = xstrdup(c->cflags);
+    if (!c->purge_set)
+        sv_push(&c->purge, "usr/share/info/dir");
     if (!c->arch) {
         struct utsname u;
         c->arch = xstrdup(uname(&u) == 0 ? u.machine : "unknown");

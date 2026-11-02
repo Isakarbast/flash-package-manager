@@ -48,7 +48,8 @@ repos:      sync  build  index  keygen  clean
 | `keygen NAME` | Create `NAME.key` (private) and `NAME.pub` (public) |
 | `clean [--keep N] [--sources]` | Delete cached packages no generation needs |
 
-Options: `-y` (don't ask), `-n` (dry run), `-f` (force), `-S` (build from source
+Options: `-y` (don't ask), `-n` (dry run), `-f` (force), `--overwrite` (replace
+existing files no package owns, e.g. when adopting a hand-built system), `-S` (build from source
 even if a binary exists), `-P N` (parallel builds), `--reinstall`, `--rebuild`,
 `--keep-build`, `-e` (list: explicit only), `--root DIR`, `--config FILE`.
 
@@ -86,6 +87,11 @@ git  = https://git.example.org/recipes.git    # fpm sync clones / pulls it
 review = yes                                  # show new or changed recipes before building
 require_signed = yes                          # refuse an unsigned git HEAD
 ```
+
+Packaging policy: `usrmerge = yes` moves files a build put in `/bin`, `/sbin`,
+`/lib`, `/lib64` or `/usr/sbin` into `/usr/bin` and `/usr/lib` (for systems
+where those are symlinks), and `purge = GLOB...` deletes generated clutter from
+every package (default `usr/share/info/dir`; e.g. add `*.la`).
 
 Repositories are searched in order; the first one that has a package wins. When
 both a binary and a recipe exist, the newer version wins (`prefer` breaks ties).
@@ -213,7 +219,7 @@ cached in memory. A lock file prevents two fpm processes from running at once.
 
 ```sh
 make                    # ./fpm
-make check              # 145 end-to-end tests in temporary roots, no root needed
+make check              # 162 end-to-end tests in temporary roots, no root needed
 make LDFLAGS=-static    # static binary (needs a static libc)
 sudo make install       # /usr/bin/fpm and /etc/fpm.conf
 ```

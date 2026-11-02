@@ -1,0 +1,4 @@
+name        = merged
+version     = 1.0
+release     = 1
+description = Installs into sbin, lib64 and the info dir, like many upstream builds

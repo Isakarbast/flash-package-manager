@@ -4,6 +4,7 @@
  * off, and pack each result with its metadata. */
 #include "fpm.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fnmatch.h>
 #include <ftw.h>
@@ -265,6 +266,98 @@ static int strip_cb(const char *p, const struct stat *st, int type, struct FTW *
     return 0;
 }
 
+/* usrmerge: /bin, /sbin, /lib, /lib64 and /usr/sbin are symlinks into /usr on
+ * the target, so files a build put there move to usr/bin and usr/lib, and the
+ * package never ships those directories (or symlinks in their place). */
+static int merge_into(const char *src, const char *dst)
+{
+    if (mkdir_p(dst, 0755))
+        return -1;
+    DIR *d = opendir(src);
+    if (!d)
+        return -1;
+    int rc = 0;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
+            continue;
+        char *s = xasprintf("%s/%s", src, e->d_name), *t = xasprintf("%s/%s", dst, e->d_name);
+        struct stat ss, ts;
+        if (lstat(t, &ts) != 0) {
+            if (rename(s, t))
+                rc = -1;
+        } else if (lstat(s, &ss) == 0 && S_ISDIR(ss.st_mode) && S_ISDIR(ts.st_mode)) {
+            rc |= merge_into(s, t);
+        } else {
+            warnf("usrmerge: %s and %s both exist", s, t);
+            rc = -1;
+        }
+        free(s);
+        free(t);
+    }
+    closedir(d);
+    if (rc == 0 && rmdir(src))
+        rc = -1;
+    return rc;
+}
+
+static int usr_merge(const char *pkgdir)
+{
+    static const char *pairs[][2] = {
+        { "usr/sbin", "usr/bin" }, { "sbin", "usr/bin" }, { "bin", "usr/bin" },
+        { "usr/lib64", "usr/lib" }, { "lib64", "usr/lib" }, { "lib", "usr/lib" },
+    };
+    for (size_t i = 0; i < sizeof pairs / sizeof pairs[0]; i++) {
+        char *src = xasprintf("%s/%s", pkgdir, pairs[i][0]);
+        char *dst = xasprintf("%s/%s", pkgdir, pairs[i][1]);
+        struct stat st;
+        int rc = 0;
+        if (lstat(src, &st) == 0) {
+            if (S_ISDIR(st.st_mode))
+                rc = merge_into(src, dst);
+            else
+                rc = unlink(src);
+        }
+        free(src);
+        free(dst);
+        if (rc) {
+            warnf("usrmerge failed for %s", pairs[i][0]);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static const strvec *purge_globs;
+static size_t purge_prefix;
+
+/* A glob with a slash matches the path from the package root; one without
+ * matches the file name anywhere (like makepkg's PURGE_TARGETS). */
+static int purge_cb(const char *p, const struct stat *st, int type, struct FTW *f)
+{
+    (void)st;
+    if (type == FTW_D || type == FTW_DP)
+        return 0;
+    const char *rel = p + purge_prefix;
+    for (size_t i = 0; i < purge_globs->n; i++) {
+        const char *g = purge_globs->v[i];
+        if (strchr(g, '/') ? !fnmatch(g, rel, FNM_PATHNAME) : !fnmatch(g, p + f->base, 0)) {
+            unlink(p);
+            break;
+        }
+    }
+    return 0;
+}
+
+static void purge(const config *c, const char *pkgdir)
+{
+    if (!c->purge.n)
+        return;
+    purge_globs = &c->purge;
+    purge_prefix = strlen(pkgdir) + 1;
+    nftw(pkgdir, purge_cb, 32, FTW_PHYS | FTW_DEPTH);
+}
+
 static int run_build_script(const config *c, const recipe *r, const char *bdir,
                             const char *srcdir, const char *pkgdir)
 {
@@ -414,8 +507,14 @@ static int scan_cb(const char *p, const struct stat *st, int type, struct FTW *f
         return 0;
     scan_size += st->st_size;
     char *so = NULL;
-    if (elf_dynamic(p, &scan_needed, &so) == 0 && so && !sv_contains(&scan_sonames, so))
-        sv_push(&scan_sonames, so);
+    if (elf_dynamic(p, &scan_needed, &so) == 0) {
+        /* A library linked without -soname (perl's libperl.so) is found by
+         * its file name, so that is what it provides. */
+        if (!so && !strncmp(base, "lib", 3) && strstr(base, ".so"))
+            so = xstrdup(base);
+        if (so && !sv_contains(&scan_sonames, so))
+            sv_push(&scan_sonames, so);
+    }
     free(so);
     return 0;
 }
@@ -498,7 +597,7 @@ int build_recipe(const config *c, const recipe *r)
         const char *base = strrchr(local, '/') + 1;
         int rc;
         if (is_tarball(base)) {
-            char *argv[] = { "tar", "-xf", local, "-C", srcdir, NULL };
+            char *argv[] = { "tar", "--no-same-owner", "-xf", local, "-C", srcdir, NULL };
             rc = run(argv, NULL, NULL);
         } else {
             char *dst = xasprintf("%s/%s", srcdir, base);
@@ -515,6 +614,9 @@ int build_recipe(const config *c, const recipe *r)
 
     if (run_build_script(c, r, bdir, srcdir, pkgdir))
         goto out;
+    if (c->usrmerge && usr_merge(pkgdir))
+        goto out;
+    purge(c, pkgdir);
 
     if (!recipe_has_option(r, "!strip") && have_program("strip"))
         nftw(pkgdir, strip_cb, 32, FTW_PHYS);

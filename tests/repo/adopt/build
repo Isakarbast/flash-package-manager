@@ -1,0 +1,3 @@
+mkdir -p "$DESTDIR/usr/bin"
+printf '#!/bin/sh\necho packaged\n' > "$DESTDIR/usr/bin/adopted"
+chmod 755 "$DESTDIR/usr/bin/adopted"

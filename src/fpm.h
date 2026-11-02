@@ -99,10 +99,11 @@ typedef struct {
     size_t nrrepos;
     strvec repos;                    /* recipe repository paths, same order as rrepos */
     strvec shlib_ignore;             /* sonames treated as always present */
-    int jobs, parallel, sandbox, prefer_source;
+    strvec purge;                    /* globs deleted from every built package */
+    int jobs, parallel, sandbox, prefer_source, usrmerge, purge_set;
     char *cflags, *cxxflags, *ldflags, *proxy;
     /* command-line flags */
-    int force, dry_run, reinstall, rebuild, keep_build, explicit_only, keep_gens, sources;
+    int force, overwrite, dry_run, reinstall, rebuild, keep_build, explicit_only, keep_gens, sources;
     int yes, source_only;
 } config;
 

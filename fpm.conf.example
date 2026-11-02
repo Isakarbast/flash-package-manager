@@ -19,6 +19,14 @@ sandbox = auto
 # When a binary and a recipe have the same version: binary or source.
 prefer = binary
 
+# On a merged-/usr system (/bin, /sbin, /lib, /lib64 and /usr/sbin are symlinks
+# into /usr), move files that builds put there into usr/bin and usr/lib.
+# usrmerge = yes
+
+# Files deleted from every package after building: a glob with a slash matches
+# the path, one without matches the file name anywhere.
+# purge = usr/share/info/dir *.la
+
 # Shared libraries to treat as always present (e.g. while bootstrapping a
 # system whose C library isn't managed by fpm yet).
 # shlib_ignore = libc.so.6

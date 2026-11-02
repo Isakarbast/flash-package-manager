@@ -1,0 +1,8 @@
+mkdir -p "$DESTDIR/usr/sbin" "$DESTDIR/sbin" "$DESTDIR/lib64" "$DESTDIR/usr/share/info" "$DESTDIR/usr/lib"
+printf '#!/bin/sh\necho usr-sbin\n' > "$DESTDIR/usr/sbin/merged-a"
+printf '#!/bin/sh\necho sbin\n' > "$DESTDIR/sbin/merged-b"
+chmod 755 "$DESTDIR/usr/sbin/merged-a" "$DESTDIR/sbin/merged-b"
+echo lib > "$DESTDIR/lib64/merged.dat"
+echo index > "$DESTDIR/usr/share/info/dir"
+echo manual > "$DESTDIR/usr/share/info/merged.info"
+echo libtool > "$DESTDIR/usr/lib/libmerged.la"

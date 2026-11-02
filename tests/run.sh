@@ -291,6 +291,45 @@ check "unchanged recipe needs no review"  rv --reinstall install reviewed
 echo 'echo changed' >> "$T/review-repo/reviewed/build"
 has   "changed recipe must be reviewed again" "not reviewed" rv --reinstall --rebuild install reviewed
 
+echo "untracked files"
+RO=$T/overwrite-root
+mkdir -p "$RO"
+ro() { "$FPM_BIN" --root "$RO" --config "$T/fpm.conf" "$@" >/dev/null 2>&1; }
+check  "install hello"                    ro install hello
+refuse "--overwrite keeps package conflicts" ro --overwrite install clash
+mkdir -p "$RO/usr/bin" && printf '#!/bin/sh\necho stray\n' > "$RO/usr/bin/adopted" && chmod 755 "$RO/usr/bin/adopted"
+refuse "untracked file is a conflict"     ro install adopt
+check  "--overwrite adopts untracked file" ro --overwrite install adopt
+check  "adopted file is the package's"    sh -c "[ \"\$('$RO/usr/bin/adopted')\" = packaged ]"
+has    "adopted file is owned"            "owned by adopt" "$FPM_BIN" --root "$RO" --config "$T/fpm.conf" owner /usr/bin/adopted
+check  "remove adopt"                     ro remove adopt
+
+echo "usrmerge & purge"
+RM=$T/merged-root
+mkdir -p "$RM/usr/bin" "$RM/usr/lib"
+ln -s bin "$RM/usr/sbin"; ln -s usr/bin "$RM/sbin"; ln -s usr/lib "$RM/lib64"
+cp "$T/fpm.conf" "$T/merged.conf"
+printf 'usrmerge = yes\npurge = usr/share/info/dir *.la\n' >> "$T/merged.conf"
+mg() { "$FPM_BIN" --root "$RM" --config "$T/merged.conf" "$@" >/dev/null 2>&1; }
+check  "install merged"                   mg install merged
+check  "usr/sbin file is in usr/bin"      grep -q '^f - usr/bin/merged-a$' "$RM/var/lib/fpm/installed/merged/files"
+check  "sbin file is in usr/bin"          grep -q '^f - usr/bin/merged-b$' "$RM/var/lib/fpm/installed/merged/files"
+check  "lib64 file is in usr/lib"         grep -q '^f - usr/lib/merged.dat$' "$RM/var/lib/fpm/installed/merged/files"
+check  "no usr/sbin entry in the package" sh -c "! grep -q 'usr/sbin\|^. - sbin\|lib64' '$RM/var/lib/fpm/installed/merged/files'"
+check  "symlinked layout left intact"     sh -c "[ -L '$RM/usr/sbin' ] && [ -L '$RM/sbin' ] && [ -L '$RM/lib64' ]"
+check  "program runs via /usr/sbin"       sh -c "[ \"\$('$RM/usr/sbin/merged-a')\" = usr-sbin ]"
+has    "owner follows the /usr/sbin symlink" "owned by merged" "$FPM_BIN" --root "$RM" --config "$T/merged.conf" owner /usr/sbin/merged-a
+has    "owner follows the /sbin symlink"   "owned by merged" "$FPM_BIN" --root "$RM" --config "$T/merged.conf" owner /sbin/merged-b
+check  "info dir purged"                  test ! -e "$RM/usr/share/info/dir"
+check  "*.la purged anywhere"             test ! -e "$RM/usr/lib/libmerged.la"
+check  "other files kept"                 test -f "$RM/usr/share/info/merged.info"
+
+echo "libraries without a soname"
+RN=$T/nosoname-root
+mkdir -p "$RN"
+check  "program needing its own soname-less library installs" "$FPM_BIN" --root "$RN" --config "$T/fpm.conf" install nosoname
+has    "the library's file name is provided" "libnoso.so" "$FPM_BIN" --root "$RN" --config "$T/fpm.conf" info nosoname
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

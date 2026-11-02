@@ -255,7 +255,7 @@ static int check_conflicts(const config *c, const owners *o, const pkg *p, const
             } else if (own && strcmp(own, name) && !sv_contains(&p->replaces, own)) {
                 warnf("conflict: %s is owned by %s", dst, own);
                 n++;
-            } else if (!own && exists && !is_config(e->path)) {
+            } else if (!own && exists && !is_config(e->path) && !c->overwrite) {
                 warnf("conflict: %s exists in the filesystem", dst);
                 n++;
             }
@@ -310,7 +310,7 @@ int txn_install(const config *c, owners *o, const char *archive, int mark_explic
     }
     int conflicts = check_conflicts(c, o, &p, &nm);
     if (conflicts && !c->force) {
-        warnf("%s: %d conflict(s); nothing changed (--force overwrites)", p.name, conflicts);
+        warnf("%s: %d conflict(s); nothing changed (--overwrite replaces files no package owns, --force overwrites all)", p.name, conflicts);
         goto out;
     }
 
