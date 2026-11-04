@@ -529,9 +529,12 @@ static int pack(const config *c, const recipe *r, const char *name, const char *
     sv_free(&scan_sonames);
     nftw(dir, scan_cb, 32, FTW_PHYS);
     strvec requires = {0};
-    for (size_t i = 0; i < scan_needed.n; i++)
-        if (!sv_contains(&scan_sonames, scan_needed.v[i]))
-            sv_push(&requires, scan_needed.v[i]);
+    /* !shlibs: the libraries come from the program's own runtime (a container
+     * or bundled loader path), not from the system. */
+    if (!recipe_has_option(r, "!shlibs"))
+        for (size_t i = 0; i < scan_needed.n; i++)
+            if (!sv_contains(&scan_sonames, scan_needed.v[i]))
+                sv_push(&requires, scan_needed.v[i]);
     sv_sort(&requires);
     sv_sort(&scan_sonames);
 

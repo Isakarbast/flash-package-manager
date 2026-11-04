@@ -1,0 +1,4 @@
+name = bundled
+version = 1
+description = Links a library its runtime environment provides, not the system
+options = !shlibs

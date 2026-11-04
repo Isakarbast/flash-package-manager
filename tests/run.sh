@@ -330,6 +330,12 @@ mkdir -p "$RN"
 check  "program needing its own soname-less library installs" "$FPM_BIN" --root "$RN" --config "$T/fpm.conf" install nosoname
 has    "the library's file name is provided" "libnoso.so" "$FPM_BIN" --root "$RN" --config "$T/fpm.conf" info nosoname
 
+echo "options = !shlibs"
+RB=$T/bundled-root
+mkdir -p "$RB"
+check  "missing libraries are not required"  "$FPM_BIN" --root "$RB" --config "$T/fpm.conf" install bundled
+refuse "and none are recorded"               sh -c "\"$FPM_BIN\" --root '$RB' --config '$T/fpm.conf' info bundled | grep -q libbundled"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

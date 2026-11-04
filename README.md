@@ -163,6 +163,10 @@ zlib-dev.files       = usr/include usr/lib/*.a usr/lib/pkgconfig
   `#branch=…` (not reproducible). Submodules are fetched too, at the commits
   the checkout pins (this needs the network). Remote tarballs need a real
   `sha256`; git uses `SKIP` because the commit pins it.
+- **Options**: `options = !strip` keeps binaries unstripped (signed or
+  prebuilt ones); `options = !shlibs` records no shared-library requirements,
+  for programs whose libraries come from their own runtime (e.g. a container),
+  not the system.
 - **Split packages**: `<sub>.files` moves matching paths (globs; a directory
   takes its contents) into a separate package; each subpackage can also have
   `depends`, `provides`, `conflicts`, `replaces` and `description`.

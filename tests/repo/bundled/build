@@ -1,0 +1,6 @@
+# Link against a stub; the real library would come from the app's own runtime.
+printf 'const char *bundled(void) { return ""; }\n' > stub.c
+cc -shared -fPIC -Wl,-soname,libbundled.so.1 -o libbundled.so stub.c
+printf 'const char *bundled(void);\nint main(void) { return *bundled(); }\n' > main.c
+cc -o bundled main.c -L. -lbundled
+install -Dm755 bundled "$DESTDIR/usr/bin/bundled"
