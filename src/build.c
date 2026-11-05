@@ -507,11 +507,12 @@ static int scan_cb(const char *p, const struct stat *st, int type, struct FTW *f
         return 0;
     scan_size += st->st_size;
     char *so = NULL;
-    if (elf_dynamic(p, &scan_needed, &so) == 0) {
+    int bits = elf_dynamic(p, &scan_needed, &so);
+    if (bits > 0) {
         /* A library linked without -soname (perl's libperl.so) is found by
          * its file name, so that is what it provides. */
         if (!so && !strncmp(base, "lib", 3) && strstr(base, ".so"))
-            so = xstrdup(base);
+            so = bits == 32 ? xasprintf("%s" SHLIB32_TAG, base) : xstrdup(base);
         if (so && !sv_contains(&scan_sonames, so))
             sv_push(&scan_sonames, so);
     }
@@ -617,7 +618,7 @@ int build_recipe(const config *c, const recipe *r)
 
     if (run_build_script(c, r, bdir, srcdir, pkgdir))
         goto out;
-    if (c->usrmerge && usr_merge(pkgdir))
+    if (c->usrmerge && !recipe_has_option(r, "!usrmerge") && usr_merge(pkgdir))
         goto out;
     purge(c, pkgdir);
 

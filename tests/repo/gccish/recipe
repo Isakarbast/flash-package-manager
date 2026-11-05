@@ -1,0 +1,4 @@
+name = gccish
+version = 1
+description = Ships libgx.so.1 and depends on binutilsish (like gcc)
+depends = binutilsish

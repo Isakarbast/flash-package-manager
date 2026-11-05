@@ -1,0 +1,5 @@
+printf 'int twin(void) { return 0; }\n' > t.c
+cc -shared -fPIC -Wl,-soname,libtwin.so.1 -o libtwin.so t.c
+printf 'int twin(void);\nint main(void) { return twin(); }\n' > main.c
+cc -o twinuser main.c -L. -ltwin
+install -Dm755 twinuser "$DESTDIR/usr/bin/twinuser"

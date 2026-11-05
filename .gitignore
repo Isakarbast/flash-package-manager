@@ -1,3 +1,4 @@
 # build output
 *.o
 /fpm
+/fpm-*.tar.gz

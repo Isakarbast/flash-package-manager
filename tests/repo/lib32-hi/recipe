@@ -1,0 +1,3 @@
+name = lib32-hi
+version = 1
+description = The same library, 32-bit

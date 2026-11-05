@@ -27,6 +27,15 @@ void sv_push_own(strvec *sv, char *s)
 
 void sv_push(strvec *sv, const char *s) { sv_push_own(sv, xstrdup(s)); }
 
+/* Position of s in sv, or -1. */
+long sv_index(const strvec *sv, const char *s)
+{
+    for (size_t i = 0; i < sv->n; i++)
+        if (!strcmp(sv->v[i], s))
+            return (long)i;
+    return -1;
+}
+
 int sv_contains(const strvec *sv, const char *s)
 {
     for (size_t i = 0; i < sv->n; i++)

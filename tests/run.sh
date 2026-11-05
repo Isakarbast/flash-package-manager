@@ -324,6 +324,12 @@ check  "info dir purged"                  test ! -e "$RM/usr/share/info/dir"
 check  "*.la purged anywhere"             test ! -e "$RM/usr/lib/libmerged.la"
 check  "other files kept"                 test -f "$RM/usr/share/info/merged.info"
 
+echo "options = !usrmerge"
+RL=$T/layout-root
+mkdir -p "$RL"
+check  "a package may ship /bin as a symlink" "$FPM_BIN" --root "$RL" --config "$T/merged.conf" install layout
+check  "and it is installed"                 test -L "$RL/bin"
+
 echo "libraries without a soname"
 RN=$T/nosoname-root
 mkdir -p "$RN"
@@ -335,6 +341,57 @@ RB=$T/bundled-root
 mkdir -p "$RB"
 check  "missing libraries are not required"  "$FPM_BIN" --root "$RB" --config "$T/fpm.conf" install bundled
 refuse "and none are recorded"               sh -c "\"$FPM_BIN\" --root '$RB' --config '$T/fpm.conf' info bundled | grep -q libbundled"
+
+echo "libraries from the same transaction"
+RT=$T/same-txn-root
+mkdir -p "$RT"
+check  "program and its library in one command" "$FPM_BIN" --root "$RT" --config "$T/fpm.conf" install hiprog hi
+check  "both installed"                     test -x "$RT/usr/bin/hiprog" -a -f "$RT/usr/lib/libhi.so.1"
+RT2=$T/same-txn-root2
+mkdir -p "$RT2"
+has    "still refused when nothing provides it" "needs libhi.so.1, which no installed package provides" "$FPM_BIN" --root "$RT2" --config "$T/fpm.conf" install hiprog
+
+echo "a library two packages provide"
+RY=$T/twin-root
+mkdir -p "$RY"
+y() { "$FPM_BIN" --root "$RY" --config "$T/fpm.conf" "$@"; }
+check  "install both providers and a user"  y install twin-a twin-b twinuser
+bump twin-b 2
+check  "one may drop it while the other has it" y upgrade
+
+echo "library cycles through a binary repository"
+CB=$T/cyc-builder CS=$T/srv/cyc CR=$T/cyc-client
+mkdir -p "$CB" "$CS" "$CR"
+check  "build gccish and binutilsish"       "$FPM_BIN" --root "$CB" --config "$T/fpm.conf" build gccish binutilsish
+cp "$CB"/var/cache/fpm/pkgs/*ish-*.fpm.tar.zst "$CS/"
+check  "index them"                         "$FPM_BIN" index "$CS"
+cat > "$T/cyc.conf" <<CONF
+shlib_ignore = libc.so.6
+[recipes none]
+path = $EMPTY
+[repo cyc]
+url = file://$CS
+allow_unsigned = yes
+CONF
+z() { "$FPM_BIN" --root "$CR" --config "$T/cyc.conf" "$@"; }
+check  "sync"                               z sync
+check  "install the pair despite the cycle" z -y install gccish
+check  "both installed"                     test -f "$CR/usr/lib/libgx.so.1" -a -x "$CR/usr/bin/binutilsish"
+
+echo "32-bit libraries"
+if printf 'int main(void) { return 0; }\n' | cc -m32 -x c - -o "$T/m32" 2>/dev/null; then
+    RW=$T/m32-root
+    mkdir -p "$RW"
+    w() { "$FPM_BIN" --root "$RW" --config "$T/fpm.conf" "$@"; }
+    check  "64-bit libhi installs"              w install hi
+    has    "32-bit program needs the 32-bit libhi" "needs libhi.so.1:32" w install hi32
+    refuse "so it isn't installed"              test -e "$RW/usr/bin/hi32"
+    check  "with lib32-hi it installs"          w install lib32-hi hi32
+    has    "lib32-hi provides the tagged name"  "libhi.so.1:32" w info lib32-hi
+    has    "hi still provides the plain name"   "libhi.so.1$" w info hi
+else
+    echo "  skip  (no 32-bit C compiler)"
+fi
 
 echo
 echo "$pass passed, $fail failed"

@@ -1,4 +1,4 @@
-/* fpm - Freedom Package Manager: command-line interface. */
+/* fpm - Flash Package Manager: command-line interface. */
 #include "fpm.h"
 
 #include <dirent.h>
@@ -110,6 +110,7 @@ static void warn_pending(void)
 
 static void finish(const char *cmd)
 {
+    txn_run_deferred(&C);
     hooks_run(&C, &txn_changed);
     gen_record(&C, cmd);
 }

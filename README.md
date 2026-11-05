@@ -1,4 +1,4 @@
-# fpm: Freedom Package Manager
+# fpm: Flash Package Manager
 
 A fast, small package manager in C, in the spirit of Void's xbps and Arch's
 pacman + AUR helpers:
@@ -166,7 +166,8 @@ zlib-dev.files       = usr/include usr/lib/*.a usr/lib/pkgconfig
 - **Options**: `options = !strip` keeps binaries unstripped (signed or
   prebuilt ones); `options = !shlibs` records no shared-library requirements,
   for programs whose libraries come from their own runtime (e.g. a container),
-  not the system.
+  not the system; `options = !usrmerge` ships `/bin`, `/lib` and friends as
+  they are (for the package that owns those symlinks).
 - **Split packages**: `<sub>.files` moves matching paths (globs; a directory
   takes its contents) into a separate package; each subpackage can also have
   `depends`, `provides`, `conflicts`, `replaces` and `description`.
@@ -186,7 +187,10 @@ exec  = ldconfig
 ```
 
 With `--root`, hooks run inside the target root (`chroot`), which needs root;
-`chroot = no` runs them on the host with `$ROOT` set instead.
+`chroot = no` runs them on the host with `$ROOT` set instead. `post-install`
+and `pre-remove` scripts do the same when fpm runs as root (inside the target,
+with `ROOT=/`, so `useradd` and `chown` act on it); otherwise they run on the
+host with `$ROOT` set to the target.
 
 ## How it works
 
@@ -223,9 +227,10 @@ cached in memory. A lock file prevents two fpm processes from running at once.
 
 ```sh
 make                    # ./fpm
-make check              # 162 end-to-end tests in temporary roots, no root needed
+make check              # 180 end-to-end tests in temporary roots, no root needed
 make LDFLAGS=-static    # static binary (needs a static libc)
 sudo make install       # /usr/bin/fpm and /etc/fpm.conf
+make dist               # fpm-VERSION.tar.gz, reproducible, for packaging fpm itself
 ```
 
 The tests cover installs with dependencies, conflicts, cycles, version
@@ -249,7 +254,7 @@ signature and a tampered archive.
   network even when the main commit is cached.
 
 The name `fpm` is also used by an unrelated Ruby packaging tool. If both end up on
-one system, rename this binary (e.g. `freedom`) in the Makefile.
+one system, rename this binary (e.g. `flash`) in the Makefile.
 
 ## License
 

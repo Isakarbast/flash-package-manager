@@ -1,0 +1,6 @@
+# Link against a 32-bit stub with the same soname; the real one is lib32-hi.
+printf 'const char *hi(void) { return ""; }\n' > stub.c
+cc -m32 -shared -fPIC -Wl,-soname,libhi.so.1 -o libhi.so stub.c
+printf '#include <stdio.h>\nconst char *hi(void);\nint main(void) { puts(hi()); return 0; }\n' > main.c
+cc -m32 -o hi32 main.c -L. -lhi
+install -Dm755 hi32 "$DESTDIR/usr/bin/hi32"

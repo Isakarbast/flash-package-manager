@@ -1,4 +1,4 @@
-/* fpm - Freedom Package Manager */
+/* fpm - Flash Package Manager */
 #ifndef FPM_H
 #define FPM_H
 
@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define FPM_VERSION "0.2.0"
+#define FPM_VERSION "0.3.1"
 #define PKG_EXT ".fpm.tar.zst"
 #define INDEX_FILE "index.fpm.zst"
 
@@ -20,6 +20,7 @@ typedef struct {
 void  sv_push(strvec *sv, const char *s);
 void  sv_push_own(strvec *sv, char *s);
 int   sv_contains(const strvec *sv, const char *s);
+long  sv_index(const strvec *sv, const char *s);
 void  sv_split(strvec *sv, const char *s);
 void  sv_sort(strvec *sv);
 char *sv_join(const strvec *sv, const char *sep);
@@ -212,7 +213,11 @@ int  repo_keygen(const char *base);
 
 /* ---- elf.c ---- */
 
-/* DT_NEEDED entries and DT_SONAME of a dynamic ELF file. -1 if not one. */
+/* Suffix on library names from 32-bit ELF files ("libX11.so.6:32"). */
+#define SHLIB32_TAG ":32"
+
+/* DT_NEEDED entries and DT_SONAME of a dynamic ELF file; returns its class
+ * (32 or 64), or -1 if it isn't one. */
 int elf_dynamic(const char *path, strvec *needed, char **soname);
 
 /* ---- build.c ---- */
@@ -230,10 +235,17 @@ typedef struct { hmap files; hmap dirs; } owners;  /* path -> owner name / dir r
 extern strvec txn_changed;
 /* Every package installed or removed by the current command (set by the caller). */
 extern strvec txn_plan;
+/* Set while other packages of the transaction are still to be installed: a
+ * package whose libraries aren't there yet is deferred (txn_install returns
+ * TXN_DEFERRED) instead of refused, since one of them may provide them. */
+extern int txn_may_defer;
+#define TXN_DEFERRED 2
 
 void owners_load(const config *c, owners *o);
 void owners_free(owners *o);
 int  txn_install(const config *c, owners *o, const char *archive, int mark_explicit);
+/* Run the post-install scripts a --root transaction deferred (see txn.c). */
+void txn_run_deferred(const config *c);
 int  txn_remove(const config *c, owners *o, const char *name);
 /* Finish a transaction that was interrupted (crash, power loss). 1 = repaired, 0 = nothing to do, -1 = failed. */
 int  txn_repair(const config *c);
@@ -262,7 +274,7 @@ void find_orphans(const config *c, strvec *out);
 
 /* ---- sched.c ---- */
 
-enum { J_WAIT, J_BUILDING, J_READY, J_DONE, J_FAILED };
+enum { J_WAIT, J_BUILDING, J_READY, J_DONE, J_FAILED, J_DEFERRED };
 
 typedef struct {
     char *name;

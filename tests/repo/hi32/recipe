@@ -1,0 +1,3 @@
+name = hi32
+version = 1
+description = 32-bit program that links libhi but never declares it

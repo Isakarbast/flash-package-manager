@@ -1,0 +1,3 @@
+name = binutilsish
+version = 1
+description = Links libgx.so.1 from gccish (like binutils and libstdc++)

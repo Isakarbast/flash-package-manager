@@ -1,0 +1,3 @@
+printf 'const char *hi(void) { return "hi"; }\n' > hi.c
+cc -m32 -shared -fPIC -Wl,-soname,libhi.so.1 -o libhi.so.1 hi.c
+install -Dm755 libhi.so.1 "$DESTDIR/usr/lib32/libhi.so.1"

@@ -1,10 +1,12 @@
 /* Read DT_NEEDED and DT_SONAME from ELF files (32- and 64-bit, little endian).
  * Builds record which shared libraries a package provides and needs, so
- * dependencies on libraries are found automatically. */
+ * dependencies on libraries are found automatically. Names from 32-bit files
+ * carry SHLIB32_TAG, so a 32-bit program isn't satisfied by a 64-bit library. */
 #include "fpm.h"
 
 #include <elf.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -53,14 +55,16 @@ static int parse##BITS(const unsigned char *base, size_t size, strvec *needed, c
         uint64_t off = d[i].d_un.d_val;                                                  \
         if (off >= strsz || !memchr(str + off, 0, strsz - off))                          \
             continue;                                                                    \
+        char *name = BITS == 32 ? xasprintf("%s" SHLIB32_TAG, str + off) : xstrdup(str + off); \
         if (d[i].d_tag == DT_NEEDED) {                                                   \
-            if (!sv_contains(needed, str + off))                                         \
-                sv_push(needed, str + off);                                              \
+            if (!sv_contains(needed, name))                                              \
+                sv_push(needed, name);                                                   \
         } else if (soname && !*soname) {                                                 \
-            *soname = xstrdup(str + off);                                                \
+            *soname = xstrdup(name);                                                     \
         }                                                                                \
+        free(name);                                                                      \
     }                                                                                    \
-    return 0;                                                                            \
+    return BITS;                                                                         \
 }
 
 DEFINE_PARSER(32)

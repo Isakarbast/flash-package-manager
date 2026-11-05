@@ -1,0 +1,4 @@
+name = layout
+version = 1
+description = Owns the /bin -> usr/bin symlink (like a filesystem package)
+options = !usrmerge

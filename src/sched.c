@@ -65,9 +65,12 @@ job *jobs_plan(const config *c, const strvec *order, const strvec *explicit_name
         pkgview v = cand_view(&j->x);
         add_waits(j, v.depends, order);
         if (j->x.binary) {
+            /* Wait only for library providers planned earlier: a later one is
+             * a cycle (binutils needs gcc's libstdc++, gcc depends on binutils),
+             * and the install accepts a library this transaction provides. */
             for (size_t k = 0; k < j->x.rp->shlib_requires.n; k++) {
                 const pkg *prov = repo_shlib_provider(c, j->x.rp->shlib_requires.v[k]);
-                if (prov)
+                if (prov && sv_index(order, prov->name) < (long)i)
                     add_wait(j, prov->name, order);
             }
         } else if (c->rebuild || !recipe_built(c, &j->x.r)) {
@@ -144,13 +147,34 @@ static int fetch_binaries(const config *c, job *jobs, size_t n)
     return rc;
 }
 
+/* Are other jobs of this transaction still to be installed? */
+static int others_pending(const job *jobs, size_t n, const job *self)
+{
+    for (size_t i = 0; i < n; i++)
+        if (&jobs[i] != self && jobs[i].state != J_DONE && jobs[i].state != J_FAILED)
+            return 1;
+    return 0;
+}
+
+/* Retry deferred jobs; returns how many there were. */
+static int wake_deferred(job *jobs, size_t n)
+{
+    int k = 0;
+    for (size_t i = 0; i < n; i++)
+        if (jobs[i].state == J_DEFERRED) {
+            jobs[i].state = J_READY;
+            k++;
+        }
+    return k;
+}
+
 int jobs_run(const config *c, job *jobs, size_t n, owners *o)
 {
     if (o && fetch_binaries(c, jobs, n)) {
         warnf("nothing was changed");
         return 1;
     }
-    int slots = c->parallel > 0 ? c->parallel : 1, running = 0, failed = 0;
+    int slots = c->parallel > 0 ? c->parallel : 1, running = 0, failed = 0, final_pass = 0;
     worker *w = calloc((size_t)slots, sizeof *w);
     strvec built = {0};
     if (!w)
@@ -163,16 +187,26 @@ int jobs_run(const config *c, job *jobs, size_t n, owners *o)
             job *j = &jobs[i];
             if (j->state != J_READY)
                 continue;
-            progress = 1;
             if (!o) {
                 j->state = J_DONE;
+                progress = 1;
                 continue;
             }
+            /* Its libraries may come from a package later in this transaction. */
+            txn_may_defer = !final_pass && others_pending(jobs, n, j);
             char *a = archive_path(c, j->name, j->x.version, j->x.release);
             int rc = txn_install(c, o, a, j->mark);
             free(a);
+            txn_may_defer = 0;
+            if (rc == TXN_DEFERRED) {
+                j->state = J_DEFERRED;
+                continue;
+            }
+            progress = 1;
             j->state = rc ? J_FAILED : J_DONE;
             failed |= rc != 0;
+            if (!rc)
+                wake_deferred(jobs, n);
         }
 
         for (size_t i = 0; i < n && !failed; i++) {
@@ -213,8 +247,14 @@ int jobs_run(const config *c, job *jobs, size_t n, owners *o)
 
         if (progress)
             continue;
-        if (!running)
-            break;
+        if (!running) {
+            /* Nothing else can provide what the deferred ones need: install
+             * them now, which reports the missing libraries. */
+            if (final_pass || !wake_deferred(jobs, n))
+                break;
+            final_pass = 1;
+            continue;
+        }
 
         int st;
         pid_t pid = waitpid(-1, &st, 0);

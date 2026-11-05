@@ -20,6 +20,7 @@
 
 strvec txn_changed;
 strvec txn_plan;
+int txn_may_defer;
 
 /* ---- ownership index ---- */
 
@@ -192,27 +193,51 @@ static int walk_cb(const char *p, const struct stat *st, int type, struct FTW *f
 
 /* ---- install ---- */
 
+/* Does an installed package other than `self` provide soname? (Two can: before
+ * 32-bit names were tagged, a lib32 package listed the same name as its
+ * 64-bit twin.) */
+static int other_provider(const config *c, const strvec *names, const char *self, const char *so)
+{
+    for (size_t j = 0; j < names->n; j++) {
+        pkg q;
+        if (!strcmp(names->v[j], self) || db_get(c, names->v[j], &q))
+            continue;
+        int has = sv_contains(&q.shlib_provides, so);
+        pkg_free(&q);
+        if (has)
+            return 1;
+    }
+    return 0;
+}
+
 /* Every shared library p needs must be provided, and upgrading p must not take
  * away a library that another installed package still uses. */
+/* Installed, or provided by a repository package in this same transaction. */
+static int shlib_available(const config *c, const char *so)
+{
+    if (shlib_satisfied(c, so))
+        return 1;
+    const pkg *prov = repo_shlib_provider(c, so);
+    return prov && sv_contains(&txn_plan, prov->name);
+}
+
 static int check_shlibs(const config *c, const pkg *p, const pkg *old)
 {
     int bad = 0;
-    for (size_t i = 0; i < p->shlib_requires.n; i++) {
-        if (!shlib_satisfied(c, p->shlib_requires.v[i])) {
+    for (size_t i = 0; i < p->shlib_requires.n; i++)
+        bad |= !shlib_available(c, p->shlib_requires.v[i]);
+    if (bad && txn_may_defer)
+        return TXN_DEFERRED;
+    for (size_t i = 0; i < p->shlib_requires.n; i++)
+        if (!shlib_available(c, p->shlib_requires.v[i]))
             warnf("%s needs %s, which no installed package provides", p->name, p->shlib_requires.v[i]);
-            bad = 1;
-        }
-    }
     if (!old)
         return bad;
     strvec names = {0};
     db_list(c, &names);
     for (size_t i = 0; i < old->shlib_provides.n; i++) {
         const char *so = old->shlib_provides.v[i];
-        if (sv_contains(&p->shlib_provides, so))
-            continue;
-        const char *other = db_shlib_provider(c, so);
-        if (other && strcmp(other, p->name))
+        if (sv_contains(&p->shlib_provides, so) || other_provider(c, &names, p->name, so))
             continue;
         for (size_t j = 0; j < names.n; j++) {
             pkg q;
@@ -265,6 +290,87 @@ static int check_conflicts(const config *c, const owners *o, const pkg *p, const
     return n;
 }
 
+/* Install and pre-remove scripts. With --root as root they run inside the
+ * target (chroot, ROOT=/), like hooks, so useradd, chown and friends act on
+ * it; otherwise on the host with ROOT set to the target. */
+static int in_target(const config *c)
+{
+    return strcmp(c->root, "/") != 0 && geteuid() == 0;
+}
+
+static int run_in_target(const config *c, const char *rel)
+{
+    strvec env = {0};
+    sv_push(&env, "ROOT=/");
+    char *in = xasprintf("/%s", rel);
+    char *argv[] = { "chroot", c->root, "sh", "-e", in, NULL };
+    int rc = run(argv, c->root, &env);
+    free(in);
+    sv_free(&env);
+    return rc;
+}
+
+static int run_script(const config *c, const char *script)
+{
+    if (in_target(c)) {
+        char *dir = rpath(c, "var/tmp");
+        mkdir_p(dir, 01777);
+        char *rel = xasprintf("var/tmp/fpm-script.%d", (int)getpid());
+        char *dst = rpath(c, rel);
+        int rc = copy_file(script, dst, 0700) ? -1 : run_in_target(c, rel);
+        unlink(dst);
+        free(dst);
+        free(rel);
+        free(dir);
+        return rc;
+    }
+    strvec env = {0};
+    sv_push_own(&env, xasprintf("ROOT=%s", c->root));
+    char *argv[] = { "sh", "-e", (char *)script, NULL };
+    int rc = run(argv, c->root, &env);
+    sv_free(&env);
+    return rc;
+}
+
+/* Post-install scripts for a target root wait until the whole transaction is
+ * in place: on an empty root, a script must not run before the shell's own
+ * libraries are installed. "name\trelative path", in install order. */
+static strvec deferred_scripts;
+
+static void defer_script(const config *c, const char *name, const char *script)
+{
+    char *dir = rpath(c, "var/tmp/fpm-post");
+    mkdir_p(dir, 0700);
+    char *rel = xasprintf("var/tmp/fpm-post/%04zu-%s", deferred_scripts.n, name);
+    char *dst = rpath(c, rel);
+    if (copy_file(script, dst, 0700))
+        warnf("%s: cannot save its post-install script", name);
+    else
+        sv_push_own(&deferred_scripts, xasprintf("%s\t%s", name, rel));
+    free(dst);
+    free(rel);
+    free(dir);
+}
+
+void txn_run_deferred(const config *c)
+{
+    for (size_t i = 0; i < deferred_scripts.n; i++) {
+        char *name = deferred_scripts.v[i], *rel = strchr(name, '\t');
+        *rel++ = 0;
+        if (run_in_target(c, rel))
+            warnf("%s: post-install script failed", name);
+        char *p = rpath(c, rel);
+        unlink(p);
+        free(p);
+    }
+    if (deferred_scripts.n) {
+        char *dir = rpath(c, "var/tmp/fpm-post");
+        rmdir(dir);
+        free(dir);
+    }
+    sv_free(&deferred_scripts);
+}
+
 int txn_install(const config *c, owners *o, const char *archive, int mark_explicit)
 {
     int ret = -1, errors = 0, had = 0;
@@ -304,7 +410,12 @@ int txn_install(const config *c, owners *o, const char *archive, int mark_explic
         warnf("%s is built for %s, but this system is %s", p.name, p.arch, c->arch);
         goto out;
     }
-    if (check_shlibs(c, &p, had ? &old : NULL) && !c->force) {
+    int shlibs = c->force ? 0 : check_shlibs(c, &p, had ? &old : NULL);
+    if (shlibs == TXN_DEFERRED) {
+        ret = TXN_DEFERRED;
+        goto out;
+    }
+    if (shlibs) {
         warnf("%s: not installed (--force installs anyway)", p.name);
         goto out;
     }
@@ -390,12 +501,10 @@ int txn_install(const config *c, owners *o, const char *archive, int mark_explic
 
     char *hook = xasprintf("%s/.fpminstall", stage);
     if (path_exists(hook)) {
-        strvec env = {0};
-        sv_push_own(&env, xasprintf("ROOT=%s", c->root));
-        char *hargv[] = { "sh", "-e", hook, NULL };
-        if (run(hargv, c->root, &env))
+        if (in_target(c))
+            defer_script(c, p.name, hook);
+        else if (run_script(c, hook))
             warnf("%s: post-install script failed", p.name);
-        sv_free(&env);
     }
     free(hook);
     ret = errors ? -1 : 0;
@@ -425,11 +534,7 @@ int txn_remove(const config *c, owners *o, const char *name)
      * fails, nothing is removed (unless --force). */
     char *script = xasprintf("%s/installed/%s/pre-remove", c->db, name);
     if (path_exists(script)) {
-        strvec env = {0};
-        sv_push_own(&env, xasprintf("ROOT=%s", c->root));
-        char *argv[] = { "sh", "-e", script, NULL };
-        int rc = run(argv, c->root, &env);
-        sv_free(&env);
+        int rc = run_script(c, script);
         if (rc && !c->force) {
             warnf("%s: pre-remove script failed (exit %d); nothing removed (--force removes anyway)", name, rc);
             free(script);

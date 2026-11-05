@@ -1,3 +1,4 @@
+VERSION := $(shell sed -n 's/^\#define FPM_VERSION "\(.*\)"/\1/p' src/fpm.h)
 CC      ?= cc
 CFLAGS  ?= -O2 -pipe
 PREFIX  ?= /usr
@@ -21,7 +22,14 @@ install: fpm
 check: fpm
 	sh tests/run.sh
 
+# Release tarball of the source files (tracked or not, minus .gitignore), byte-for-byte reproducible (sorted,
+# fixed owner and time, no gzip timestamp) so recipes can pin its sha256.
+dist:
+	git ls-files -z --cached --others --exclude-standard | LC_ALL=C sort -z | tar --null -T - --mtime='2026-01-01 00:00Z' \
+		--owner=0 --group=0 --numeric-owner --format=gnu \
+		--transform='s,^,fpm-$(VERSION)/,' -cf - | gzip -n9 > fpm-$(VERSION).tar.gz
+
 clean:
 	rm -f fpm $(OBJ)
 
-.PHONY: install check clean
+.PHONY: install check clean dist

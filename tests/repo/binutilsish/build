@@ -1,0 +1,5 @@
+printf 'int gx(void) { return 0; }\n' > gx.c
+cc -shared -fPIC -Wl,-soname,libgx.so.1 -o libgx.so gx.c
+printf 'int gx(void);\nint main(void) { return gx(); }\n' > main.c
+cc -o binutilsish main.c -L. -lgx
+install -Dm755 binutilsish "$DESTDIR/usr/bin/binutilsish"

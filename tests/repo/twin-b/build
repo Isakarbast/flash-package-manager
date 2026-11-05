@@ -1,0 +1,7 @@
+printf 'int twin(void) { return 0; }\n' > t.c
+cc -shared -fPIC -Wl,-soname,libtwin.so.1 -o libtwin.so.1 t.c
+if [ "$version" = 1 ]; then
+    install -Dm755 libtwin.so.1 "$DESTDIR/opt/twin-b/libtwin.so.1"
+else
+    install -Dm644 /dev/null "$DESTDIR/opt/twin-b/empty"
+fi

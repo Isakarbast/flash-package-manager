@@ -1,0 +1,3 @@
+printf 'int twin(void) { return 0; }\n' > t.c
+cc -shared -fPIC -Wl,-soname,libtwin.so.1 -o libtwin.so.1 t.c
+install -Dm755 libtwin.so.1 "$DESTDIR/usr/lib/libtwin.so.1"

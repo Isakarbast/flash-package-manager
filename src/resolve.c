@@ -82,22 +82,28 @@ void cand_free(cand *x)
 }
 
 /* Is the soname present: ignored by config, provided by an installed package,
- * or (for systems not entirely managed by fpm) a file in a standard library dir? */
+ * or (for systems not entirely managed by fpm, and packages built before 32-bit
+ * names were tagged) a file in a library dir of the right word size? */
 int shlib_satisfied(const config *c, const char *soname)
 {
-    if (sv_contains(&c->shlib_ignore, soname) || db_shlib_provider(c, soname))
+    if (db_shlib_provider(c, soname))
         return 1;
-    static const char *dirs[] = { "usr/lib", "usr/lib64", "usr/lib32", "lib", "lib64", NULL };
-    for (int i = 0; dirs[i]; i++) {
-        char *rel = xasprintf("%s/%s", dirs[i], soname);
+    static const char *dirs64[] = { "usr/lib", "usr/lib64", "lib", "lib64", NULL };
+    static const char *dirs32[] = { "usr/lib32", "lib32", NULL };
+    size_t n = strlen(soname), tn = strlen(SHLIB32_TAG);
+    int is32 = n > tn && !strcmp(soname + n - tn, SHLIB32_TAG);
+    char *name = is32 ? strndup(soname, n - tn) : xstrdup(soname);
+    const char **dirs = is32 ? dirs32 : dirs64;
+    int ok = sv_contains(&c->shlib_ignore, soname) || sv_contains(&c->shlib_ignore, name);
+    for (int i = 0; !ok && dirs[i]; i++) {
+        char *rel = xasprintf("%s/%s", dirs[i], name);
         char *p = rpath(c, rel);
-        int ok = path_exists(p);
+        ok = path_exists(p);
         free(rel);
         free(p);
-        if (ok)
-            return 1;
     }
-    return 0;
+    free(name);
+    return ok;
 }
 
 /* ---- planning ---- */
@@ -122,6 +128,11 @@ static int need_shlib(planner *pl, const char *owner, const char *so)
     if (shlib_satisfied(pl->c, so))
         return 0;
     const pkg *prov = repo_shlib_provider(pl->c, so);
+    /* A library from a package already being planned (gcc's libstdc++ for
+     * binutils, while gcc itself depends on binutils) is not a cycle: it is
+     * part of this transaction, and the install waits for it. */
+    if (prov && (intptr_t)hm_get(&pl->state, prov->name) == VISITING)
+        return 0;
     if (prov)
         return visit(pl, prov->name, 0);
     warnf("%s needs %s, but no package provides it", owner, so);

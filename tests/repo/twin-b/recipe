@@ -1,0 +1,3 @@
+name = twin-b
+version = 1
+description = Also provides libtwin.so.1 (in version 1 only)
