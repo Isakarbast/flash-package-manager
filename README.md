@@ -227,7 +227,7 @@ cached in memory. A lock file prevents two fpm processes from running at once.
 
 ```sh
 make                    # ./fpm
-make check              # 180 end-to-end tests in temporary roots, no root needed
+make check              # 181 end-to-end tests in temporary roots, no root needed
 make LDFLAGS=-static    # static binary (needs a static libc)
 sudo make install       # /usr/bin/fpm and /etc/fpm.conf
 make dist               # fpm-VERSION.tar.gz, reproducible, for packaging fpm itself

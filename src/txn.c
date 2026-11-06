@@ -314,7 +314,8 @@ static int run_script(const config *c, const char *script)
 {
     if (in_target(c)) {
         char *dir = rpath(c, "var/tmp");
-        mkdir_p(dir, 01777);
+        mkdir_p(dir, 0755);
+        chmod(dir, 01777);
         char *rel = xasprintf("var/tmp/fpm-script.%d", (int)getpid());
         char *dst = rpath(c, rel);
         int rc = copy_file(script, dst, 0700) ? -1 : run_in_target(c, rel);
@@ -383,7 +384,8 @@ int txn_install(const config *c, owners *o, const char *archive, int mark_explic
     if (!mkdtemp(stage))
         die("cannot create stage in %s: %s", c->tmp, strerror(errno));
 
-    char *argv[] = { "tar", "-xf", (char *)archive, "-C", stage, NULL };
+    /* -p: keep the packaged modes (a non-root tar would apply the umask) */
+    char *argv[] = { "tar", "-xpf", (char *)archive, "-C", stage, NULL };
     if (run(argv, NULL, NULL)) {
         warnf("cannot unpack %s", archive);
         goto out;
@@ -446,6 +448,10 @@ int txn_install(const config *c, owners *o, const char *archive, int mark_explic
                     unlink(dst);   /* only reachable with --force */
                 if (mkdir(dst, st.st_mode & 07777) && errno != EEXIST) {
                     warnf("cannot create %s: %s", dst, strerror(errno));
+                    errors++;
+                } else if (chmod(dst, st.st_mode & 07777)) {
+                    /* mkdir applies the umask: /tmp's 1777 would become 1755 */
+                    warnf("cannot set the mode of %s: %s", dst, strerror(errno));
                     errors++;
                 }
             }

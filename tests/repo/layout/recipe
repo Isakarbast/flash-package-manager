@@ -1,4 +1,4 @@
 name = layout
 version = 1
-description = Owns the /bin -> usr/bin symlink (like a filesystem package)
+description = Owns the /bin -> usr/bin symlink and a 1777 /tmp (like a filesystem package)
 options = !usrmerge

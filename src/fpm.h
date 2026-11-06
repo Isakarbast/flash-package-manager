@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define FPM_VERSION "0.3.1"
+#define FPM_VERSION "0.3.2"
 #define PKG_EXT ".fpm.tar.zst"
 #define INDEX_FILE "index.fpm.zst"
 

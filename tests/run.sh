@@ -329,6 +329,8 @@ RL=$T/layout-root
 mkdir -p "$RL"
 check  "a package may ship /bin as a symlink" "$FPM_BIN" --root "$RL" --config "$T/merged.conf" install layout
 check  "and it is installed"                 test -L "$RL/bin"
+check  "a new directory gets the package's mode despite the umask" \
+    sh -c "[ \"\$(stat -c %a '$RL/tmp')\" = 1777 ]"
 
 echo "libraries without a soname"
 RN=$T/nosoname-root

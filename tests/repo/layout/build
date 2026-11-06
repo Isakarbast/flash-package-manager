@@ -1,2 +1,4 @@
 mkdir -p "$DESTDIR/usr/bin"
 ln -s usr/bin "$DESTDIR/bin"
+mkdir -p "$DESTDIR/tmp"
+chmod 1777 "$DESTDIR/tmp"
