@@ -241,6 +241,36 @@ int db_set_held(const config *c, const char *name, int held)
     return rc;
 }
 
+static int write_manifest(const char *path, const manifest *m, const strvec *skip)
+{
+    size_t cap = 4096, n = 0;
+    char *files = xmalloc(cap);
+    for (size_t i = 0; i < m->n; i++) {
+        const mentry *e = &m->e[i];
+        if (skip && e->type != 'd' && sv_contains(skip, e->path))
+            continue;
+        size_t need = strlen(e->path) + 72;
+        if (n + need > cap)
+            files = xrealloc(files, cap = (n + need) * 2);
+        n += (size_t)sprintf(files + n, "%c %s %s\n", e->type, e->sha[0] ? e->sha : "-", e->path);
+    }
+    int rc = write_file_atomic(path, files, n);
+    free(files);
+    return rc;
+}
+
+int db_disown(const config *c, const char *name, const strvec *paths)
+{
+    manifest m;
+    if (manifest_read(c, name, &m))
+        return -1;
+    char *fp = xasprintf("%s/installed/%s/files", c->db, name);
+    int rc = write_manifest(fp, &m, paths);
+    free(fp);
+    manifest_free(&m);
+    return rc;
+}
+
 int db_put(const config *c, const pkg *p, const manifest *m)
 {
     char *dir = xasprintf("%s/installed/%s", c->db, p->name);
@@ -248,22 +278,12 @@ int db_put(const config *c, const pkg *p, const manifest *m)
         free(dir);
         return -1;
     }
-    size_t cap = 4096, n = 0;
-    char *files = xmalloc(cap);
-    for (size_t i = 0; i < m->n; i++) {
-        const mentry *e = &m->e[i];
-        size_t need = strlen(e->path) + 72;
-        if (n + need > cap)
-            files = xrealloc(files, cap = (n + need) * 2);
-        n += (size_t)sprintf(files + n, "%c %s %s\n", e->type, e->sha[0] ? e->sha : "-", e->path);
-    }
     char *meta = pkg_format(p, 1);
     char *mp = xasprintf("%s/meta", dir), *fp = xasprintf("%s/files", dir);
-    int rc = write_file_atomic(fp, files, n);
+    int rc = write_manifest(fp, m, NULL);
     if (rc == 0)
         rc = write_file_atomic(mp, meta, strlen(meta));
     cache_forget(p->name);
-    free(files);
     free(meta);
     free(mp);
     free(fp);

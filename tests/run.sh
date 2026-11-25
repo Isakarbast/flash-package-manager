@@ -390,6 +390,24 @@ else
     echo "  skip  (no gpg)"
 fi
 
+echo "files moving between packages"
+RF=$T/move-root
+mkdir -p "$RF" "$T/repo/mover" "$T/repo/mover-data"
+mv_recipe() { printf 'name = %s\nversion = %s\n%s\n' "$1" "$2" "$3" > "$T/repo/$1/recipe"; printf '%s\n' "$4" > "$T/repo/$1/build"; }
+mvf() { "$FPM_BIN" --root "$RF" --config "$T/fpm.conf" -y "$@"; }
+mv_recipe mover 1 "" 'mkdir -p "$DESTDIR/usr/share/mover"; echo bin > "$DESTDIR/usr/share/mover/bin"; echo d1 > "$DESTDIR/usr/share/mover/data"'
+check  "install mover 1"                    mvf install mover
+mv_recipe mover 2 "depends = mover-data" 'mkdir -p "$DESTDIR/usr/share/mover"; echo bin > "$DESTDIR/usr/share/mover/bin"'
+mv_recipe mover-data 2 "" 'mkdir -p "$DESTDIR/usr/share/mover"; echo d2 > "$DESTDIR/usr/share/mover/data"'
+check  "upgrade splits a file into a new dependency" mvf upgrade
+check  "the file has the new content"       grep -q d2 "$RF/usr/share/mover/data"
+has    "it belongs to mover-data"           "owned by mover-data" "$FPM_BIN" --root "$RF" --config "$T/fpm.conf" owner /usr/share/mover/data
+refuse "and is gone from mover's file list" grep -q 'usr/share/mover/data$' "$RF/var/lib/fpm/installed/mover/files"
+mv_recipe mover 3 "depends = mover-data" 'mkdir -p "$DESTDIR/usr/share/mover"; echo bin > "$DESTDIR/usr/share/mover/bin"; echo d3 > "$DESTDIR/usr/share/mover/data"'
+mv_recipe mover-data 3 "" 'mkdir -p "$DESTDIR/usr/share/mover"; echo d3 > "$DESTDIR/usr/share/mover/data"'
+has    "two packages shipping it is still a conflict" "is owned by mover-data" mvf upgrade
+check  "removing mover keeps mover-data's file" sh -c "\"$FPM_BIN\" --root '$RF' --config '$T/fpm.conf' -y -f remove mover >/dev/null 2>&1 && test -f '$RF/usr/share/mover/data'"
+
 echo "symlinks stay inside --root"
 RE=$T/esc-root
 mkdir -p "$RE"

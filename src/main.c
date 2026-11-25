@@ -332,8 +332,10 @@ static int do_install(const strvec *targets, int mark_targets, const char *cmd)
         return C.dry_run ? 0 : 1;
     }
 
-    for (size_t i = 0; i < order.n; i++)
+    for (size_t i = 0; i < order.n; i++) {
         sv_push(&txn_plan, order.v[i]);
+        hm_put(&txn_next, jobs[i].name, archive_path(&C, jobs[i].name, jobs[i].x.version, jobs[i].x.release));
+    }
     for (size_t i = 0; i < removals.n; i++)
         sv_push(&txn_plan, removals.v[i]);
     owners o;
@@ -566,6 +568,7 @@ static int cmd_rollback(const char *arg, const char *cmd)
             }
         }
         sv_push_own(&installs, xasprintf("%s %d", archive, !strcmp(reason, "explicit")));
+        hm_put(&txn_next, name, xstrdup(archive));
         sv_push_own(&shown, xasprintf("%s %s-%d", name, vr, rel));
         sv_push(&txn_plan, name);
         free(archive);
