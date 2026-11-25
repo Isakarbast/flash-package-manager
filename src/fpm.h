@@ -110,6 +110,8 @@ typedef struct {
 
 void config_load(config *c, int conf_given);
 char *rpath(const config *c, const char *rel);
+/* rpath with symlinks resolved inside the root (never escapes it); see config.c. */
+char *tpath(const config *c, const char *rel);
 const reciperepo *recipe_repo_of(const config *c, const char *recipe_dir);
 
 /* ---- recipe.c ---- */

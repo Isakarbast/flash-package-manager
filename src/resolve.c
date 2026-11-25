@@ -97,7 +97,7 @@ int shlib_satisfied(const config *c, const char *soname)
     int ok = sv_contains(&c->shlib_ignore, soname) || sv_contains(&c->shlib_ignore, name);
     for (int i = 0; !ok && dirs[i]; i++) {
         char *rel = xasprintf("%s/%s", dirs[i], name);
-        char *p = rpath(c, rel);
+        char *p = tpath(c, rel);
         ok = path_exists(p);
         free(rel);
         free(p);

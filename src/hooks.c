@@ -38,7 +38,8 @@ static void hook_kv(const char *k, const char *v, void *ud)
 
 static void collect(const config *c, const char *rel, hmap *files)
 {
-    char *dir = rpath(c, rel);
+    char *rel_dot = xasprintf("%s/.", rel), *dir = tpath(c, rel_dot);
+    free(rel_dot);
     DIR *d = opendir(dir);
     struct dirent *e;
     while (d && (e = readdir(d))) {

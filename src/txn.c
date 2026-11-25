@@ -79,6 +79,16 @@ void owners_free(owners *o)
 
 /* ---- helpers ---- */
 
+/* Is rel a directory, following a final symlink inside the root? */
+static int is_dir_in(const config *c, const char *rel)
+{
+    char *rel_dot = xasprintf("%s/.", rel), *p = tpath(c, rel_dot);
+    int d = is_dir(p);
+    free(p);
+    free(rel_dot);
+    return d;
+}
+
 static int is_config(const char *rel)
 {
     return starts_with(rel, "etc/");
@@ -114,7 +124,7 @@ static int place(const char *src, const char *dst)
 /* Remove one manifest entry from disk, respecting other owners and edited configs. */
 static void remove_entry(const config *c, const owners *o, const char *name, const mentry *e)
 {
-    char *dst = rpath(c, e->path);
+    char *dst = tpath(c, e->path);
     if (e->type == 'd') {
         if ((intptr_t)hm_get(&o->dirs, e->path) <= 1)
             rmdir(dst);   /* only succeeds when empty */
@@ -264,11 +274,11 @@ static int check_conflicts(const config *c, const owners *o, const pkg *p, const
     int n = 0;
     for (size_t i = 0; i < m->n; i++) {
         const mentry *e = &m->e[i];
-        char *dst = rpath(c, e->path);
+        char *dst = tpath(c, e->path);
         struct stat st;
         int exists = lstat(dst, &st) == 0;
         if (e->type == 'd') {
-            if (exists && !S_ISDIR(st.st_mode) && !is_dir(dst)) {
+            if (exists && !S_ISDIR(st.st_mode) && !is_dir_in(c, e->path)) {
                 warnf("conflict: %s exists and is not a directory", dst);
                 n++;
             }
@@ -313,11 +323,11 @@ static int run_in_target(const config *c, const char *rel)
 static int run_script(const config *c, const char *script)
 {
     if (in_target(c)) {
-        char *dir = rpath(c, "var/tmp");
+        char *dir = tpath(c, "var/tmp/.");
         mkdir_p(dir, 0755);
         chmod(dir, 01777);
         char *rel = xasprintf("var/tmp/fpm-script.%d", (int)getpid());
-        char *dst = rpath(c, rel);
+        char *dst = tpath(c, rel);
         int rc = copy_file(script, dst, 0700) ? -1 : run_in_target(c, rel);
         unlink(dst);
         free(dst);
@@ -340,10 +350,10 @@ static strvec deferred_scripts;
 
 static void defer_script(const config *c, const char *name, const char *script)
 {
-    char *dir = rpath(c, "var/tmp/fpm-post");
+    char *dir = tpath(c, "var/tmp/fpm-post/.");
     mkdir_p(dir, 0700);
     char *rel = xasprintf("var/tmp/fpm-post/%04zu-%s", deferred_scripts.n, name);
-    char *dst = rpath(c, rel);
+    char *dst = tpath(c, rel);
     if (copy_file(script, dst, 0700))
         warnf("%s: cannot save its post-install script", name);
     else
@@ -360,12 +370,12 @@ void txn_run_deferred(const config *c)
         *rel++ = 0;
         if (run_in_target(c, rel))
             warnf("%s: post-install script failed", name);
-        char *p = rpath(c, rel);
+        char *p = tpath(c, rel);
         unlink(p);
         free(p);
     }
     if (deferred_scripts.n) {
-        char *dir = rpath(c, "var/tmp/fpm-post");
+        char *dir = tpath(c, "var/tmp/fpm-post/.");
         rmdir(dir);
         free(dir);
     }
@@ -439,11 +449,11 @@ int txn_install(const config *c, owners *o, const char *archive, int mark_explic
     for (size_t i = 0; i < nm.n; i++) {
         const mentry *e = &nm.e[i];
         char *src = xasprintf("%s/%s", stage, e->path);
-        char *dst = rpath(c, e->path);
+        char *dst = tpath(c, e->path);
         struct stat st;
         lstat(src, &st);
         if (e->type == 'd') {
-            if (!is_dir(dst)) {
+            if (!is_dir_in(c, e->path)) {
                 if (path_exists(dst))
                     unlink(dst);   /* only reachable with --force */
                 if (mkdir(dst, st.st_mode & 07777) && errno != EEXIST) {

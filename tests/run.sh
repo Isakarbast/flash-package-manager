@@ -332,6 +332,15 @@ check  "and it is installed"                 test -L "$RL/bin"
 check  "a new directory gets the package's mode despite the umask" \
     sh -c "[ \"\$(stat -c %a '$RL/tmp')\" = 1777 ]"
 
+echo "symlinks stay inside --root"
+RE=$T/esc-root
+mkdir -p "$RE"
+check  "install a package with an absolute directory symlink" "$FPM_BIN" --root "$RE" --config "$T/fpm.conf" install esc-link
+check  "write through it"                    "$FPM_BIN" --root "$RE" --config "$T/fpm.conf" install esc-writer
+check  "the file landed inside the root"     test -f "$RE/opt/fpm-esc-real/file"
+refuse "and not on the host"                 test -e /opt/fpm-esc-real/file
+check  "removing it cleans up inside the root" sh -c "\"$FPM_BIN\" --root '$RE' --config '$T/fpm.conf' -y remove esc-writer >/dev/null 2>&1 && test ! -e '$RE/opt/fpm-esc-real/file'"
+
 echo "libraries without a soname"
 RN=$T/nosoname-root
 mkdir -p "$RN"

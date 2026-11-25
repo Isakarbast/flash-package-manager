@@ -1,0 +1,2 @@
+mkdir -p "$DESTDIR/opt/fpm-esc-real"
+ln -s /opt/fpm-esc-real "$DESTDIR/opt/esc"
