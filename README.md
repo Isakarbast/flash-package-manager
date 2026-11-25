@@ -15,7 +15,7 @@ pacman + AUR helpers:
 
 About 5,800 lines of C11 with no library dependencies; a ~130 KB binary.
 Runtime tools: GNU `tar`, `zstd`, `curl`, `sh`, `openssl` (signatures).
-Optional: `bwrap` (sandboxed builds), `git`, `strip`.
+Optional: `bwrap` (sandboxed builds), `git`, `strip`, `diff` (recipe reviews show changes).
 
 On 4,000 installed packages, `list`, `info`, `owner`, `rdeps`, `orphans` and
 planning an install or removal each take about 0.01–0.02 s.
@@ -233,7 +233,7 @@ cached in memory. A lock file prevents two fpm processes from running at once.
 
 ```sh
 make                    # ./fpm
-make check              # 181 end-to-end tests in temporary roots, no root needed
+make check              # 212 end-to-end tests in temporary roots, no root needed
 make LDFLAGS=-static    # static binary (needs a static libc)
 sudo make install       # /usr/bin/fpm and /etc/fpm.conf
 make dist               # fpm-VERSION.tar.gz, reproducible, for packaging fpm itself
