@@ -332,6 +332,51 @@ check  "and it is installed"                 test -L "$RL/bin"
 check  "a new directory gets the package's mode despite the umask" \
     sh -c "[ \"\$(stat -c %a '$RL/tmp')\" = 1777 ]"
 
+echo "signed recipe repositories"
+SG=$T/signed-up SL=$T/signed-local RS=$T/signed-root
+mkdir -p "$SG/sgn" "$RS"
+gitq() { git -C "$SG" -c user.email=t@example.org -c user.name=t "$@" >/dev/null 2>&1; }
+git init -q "$SG"
+printf 'name = sgn\nversion = 1\n' > "$SG/sgn/recipe"
+printf 'mkdir -p "$DESTDIR/usr/share/sgn"\necho v1 > "$DESTDIR/usr/share/sgn/v"\n' > "$SG/sgn/build"
+gitq add -A; gitq commit -m unsigned
+signed_conf() {
+    printf 'shlib_ignore = libc.so.6\n[recipes sgn]\npath = %s\ngit = %s\nrequire_signed = yes\n%s\n' \
+        "$SL" "$SG" "$1" > "$T/signed.conf"
+}
+sg() { "$FPM_BIN" --root "$RS" --config "$T/signed.conf" "$@"; }
+signed_conf ""
+refuse "sync refuses an unsigned clone"     sg sync
+refuse "so nothing was checked out"         test -e "$SL/sgn/recipe"
+refuse "and it can't be installed"          sg -y install sgn
+git clone -q "$SG" "$SL"
+refuse "an unsigned checkout already there isn't built" sg -y install sgn
+rm -rf "$SL"
+if command -v gpg >/dev/null 2>&1; then
+    export GNUPGHOME=$T/gnupg
+    mkdir -p "$GNUPGHOME"; chmod 700 "$GNUPGHOME"
+    gpg --batch --passphrase '' --quick-gen-key 'fpm test <t@example.org>' ed25519 sign never >/dev/null 2>&1
+    FPR=$(gpg --batch --with-colons --list-keys t@example.org 2>/dev/null | awk -F: '/^fpr/ { print $10; exit }')
+    gitq -c user.signingkey="$FPR" commit --allow-empty -S -m signed
+    signed_conf "signers = $FPR"
+    check  "sync accepts a commit signed by a listed key" sg sync
+    check  "install from it"                  sg -y install sgn
+    printf 'mkdir -p "$DESTDIR/usr/share/sgn"\necho v2 > "$DESTDIR/usr/share/sgn/v"\n' > "$SG/sgn/build"
+    sed -i 's/^version = 1/version = 2/' "$SG/sgn/recipe"
+    gitq commit -am 'unsigned update'
+    refuse "sync refuses an unsigned update"  sg sync
+    check  "the checkout stayed at the signed commit" grep -q 'version = 1' "$SL/sgn/recipe"
+    echo 'touch /tmp/x' >> "$SL/sgn/build"
+    refuse "a local edit to a signed checkout isn't built" sg -y --reinstall --rebuild install sgn
+    git -C "$SL" checkout -q -- .
+    check  "the clean signed checkout still builds" sg -y --reinstall --rebuild install sgn
+    signed_conf "signers = 0000000000000000000000000000000000000000"
+    refuse "a key not in signers is refused"  sg -y --reinstall --rebuild install sgn
+    unset GNUPGHOME
+else
+    echo "  skip  (no gpg)"
+fi
+
 echo "symlinks stay inside --root"
 RE=$T/esc-root
 mkdir -p "$RE"

@@ -87,7 +87,8 @@ typedef struct {
 
 typedef struct {
     char *name, *path, *git;
-    int require_signed;       /* sync refuses an unsigned git HEAD */
+    int require_signed;       /* only signed commits are synced and built */
+    strvec signers;           /* with require_signed: key fingerprints allowed to sign */
     int review;               /* show recipe + build script before building (AUR style) */
 } reciperepo;
 
@@ -113,6 +114,10 @@ char *rpath(const config *c, const char *rel);
 /* rpath with symlinks resolved inside the root (never escapes it); see config.c. */
 char *tpath(const config *c, const char *rel);
 const reciperepo *recipe_repo_of(const config *c, const char *recipe_dir);
+/* Is commit rev of a require_signed recipe repository signed by a trusted key? 0 = yes. */
+int recipe_repo_verify(const reciperepo *rr, const char *rev);
+/* Before building from it: HEAD verifies and the checkout has no local changes. 0 = ok. */
+int recipe_repo_trusted(const reciperepo *rr);
 
 /* ---- recipe.c ---- */
 

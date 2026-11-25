@@ -657,41 +657,62 @@ static int cmd_clean(void)
 
 /* ---- repositories ---- */
 
+/* Recipes from a require_signed repository are only checked out once the
+ * commit verifies: a fresh clone stays unchecked-out, an update is fetched
+ * and fast-forwarded to. Unsigned commits never reach the working tree. */
+static int sync_recipes(const reciperepo *rr)
+{
+    char *git = xasprintf("%s/.git", rr->path);
+    int is_git = path_exists(git);
+    free(git);
+    if (!is_git && !rr->git)
+        return 0;   /* a plain local directory */
+    const char *rev = "HEAD";
+    char *up = NULL;
+    if (!is_git) {
+        step("Cloning recipes %s from %s", rr->name, rr->git);
+        char *argv[] = { "git", "clone", "--quiet", "--no-checkout", rr->git, rr->path, NULL };
+        if (run(argv, NULL, NULL)) {
+            warnf("%s: git clone failed", rr->name);
+            return -1;
+        }
+    } else {
+        step("Syncing recipes %s", rr->name);
+        char *fetch[] = { "git", "-C", rr->path, "fetch", "--quiet", NULL };
+        char *upstream[] = { "git", "-C", rr->path, "rev-parse", "--verify", "--quiet", "@{upstream}", NULL };
+        if (run(fetch, NULL, NULL) || run_capture(upstream, &up) || !up || !*trim(up)) {
+            warnf("%s: git fetch failed", rr->name);
+            free(up);
+            return -1;
+        }
+        rev = trim(up);
+    }
+    if (rr->require_signed && recipe_repo_verify(rr, rev)) {
+        warnf("%s: the new recipes are not signed by a trusted key; keeping what you had", rr->name);
+        if (!is_git)
+            rm_rf(rr->path);   /* nothing trusted was ever checked out */
+        free(up);
+        return -1;
+    }
+    int rc;
+    if (!is_git) {
+        char *argv[] = { "git", "-C", rr->path, "checkout", "--quiet", NULL };
+        rc = run(argv, NULL, NULL);
+    } else {
+        char *argv[] = { "git", "-C", rr->path, "merge", "--ff-only", "--quiet", (char *)rev, NULL };
+        rc = run(argv, NULL, NULL);
+    }
+    if (rc)
+        warnf("%s: cannot update the checkout in %s", rr->name, rr->path);
+    free(up);
+    return rc ? -1 : 0;
+}
+
 static int cmd_sync(void)
 {
     int failed = 0;
-    for (size_t i = 0; i < C.nrrepos; i++) {
-        const reciperepo *rr = &C.rrepos[i];
-        char *git = xasprintf("%s/.git", rr->path);
-        int is_git = path_exists(git);
-        free(git);
-        if (!is_git && rr->git) {
-            step("Cloning recipes %s from %s", rr->name, rr->git);
-            char *argv[] = { "git", "clone", "--quiet", rr->git, rr->path, NULL };
-            if (run(argv, NULL, NULL)) {
-                warnf("%s: git clone failed", rr->name);
-                failed = 1;
-                continue;
-            }
-        } else if (is_git) {
-            step("Syncing recipes %s", rr->name);
-            char *pull[] = { "git", "-C", rr->path, "pull", "--ff-only", "--quiet", NULL };
-            if (run(pull, NULL, NULL)) {
-                warnf("%s: git pull failed", rr->name);
-                failed = 1;
-                continue;
-            }
-        } else {
-            continue;   /* a plain local directory */
-        }
-        if (rr->require_signed) {
-            char *verify[] = { "git", "-C", rr->path, "verify-commit", "HEAD", NULL };
-            if (run(verify, NULL, NULL)) {
-                warnf("%s: HEAD is not signed by a trusted key; do not build from it", rr->name);
-                failed = 1;
-            }
-        }
-    }
+    for (size_t i = 0; i < C.nrrepos; i++)
+        failed |= sync_recipes(&C.rrepos[i]) != 0;
     for (size_t i = 0; i < C.nbrepos; i++)
         failed |= repo_sync(&C, &C.brepos[i]) != 0;
     return failed;

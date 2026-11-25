@@ -198,6 +198,8 @@ static void recipes_kv(config *c, reciperepo *r, const char *k, const char *v)
         set(&r->git, v);
     else if (!strcmp(k, "require_signed"))
         r->require_signed = yes(v);
+    else if (!strcmp(k, "signers"))
+        sv_split(&r->signers, v);
     else if (!strcmp(k, "review"))
         r->review = yes(v);
     else

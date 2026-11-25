@@ -578,6 +578,9 @@ int build_recipe(const config *c, const recipe *r)
     if (recipe_built(c, r) && !c->rebuild)
         return 0;
     step("Building %s %s-%d", r->name, r->version, r->release);
+    const reciperepo *rr = recipe_repo_of(c, r->dir);
+    if (rr && recipe_repo_trusted(rr))
+        return -1;
 
     int ret = -1;
     char *pkgs = xasprintf("%s/pkgs", c->cache), *srcs = xasprintf("%s/sources", c->cache);

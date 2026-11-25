@@ -85,7 +85,8 @@ key = /etc/fpm/keys/main.pub
 path = /var/db/fpm/recipes/community
 git  = https://git.example.org/recipes.git    # fpm sync clones / pulls it
 review = yes                                  # show new or changed recipes before building
-require_signed = yes                          # refuse an unsigned git HEAD
+require_signed = yes                          # only signed commits are synced or built
+signers = 3AA5C34371567BD2...                 # optional: key fingerprints allowed to sign
 ```
 
 Packaging policy: `usrmerge = yes` moves files a build put in `/bin`, `/sbin`,

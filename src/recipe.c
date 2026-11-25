@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 
 int valid_name(const char *s)
@@ -398,5 +399,53 @@ int dep_satisfied(const char *op, const char *want, const char *have)
         return c < 0;
     if (!strcmp(op, "=") || !strcmp(op, "=="))
         return c == 0;
+    return 0;
+}
+
+/* ---- signed recipe repositories ---- */
+
+int recipe_repo_verify(const reciperepo *rr, const char *rev)
+{
+    if (!rr->signers.n) {
+        char *argv[] = { "git", "-C", rr->path, "verify-commit", (char *)rev, NULL };
+        return run(argv, NULL, NULL) ? -1 : 0;
+    }
+    /* %G?: G good, U good but the key's validity is unknown (fine: the
+     * fingerprint is what we check); %GF signing key, %GP its primary key. */
+    char *out = NULL;
+    char *argv[] = { "git", "-C", rr->path, "log", "-1", "--format=%G?%n%GF%n%GP", (char *)rev, "--", NULL };
+    int ok = run_capture(argv, &out) == 0 && out && (out[0] == 'G' || out[0] == 'U') && out[1] == '\n';
+    if (ok) {
+        strvec lines = {0};
+        for (char *save = NULL, *l = strtok_r(out + 2, "\n", &save); l; l = strtok_r(NULL, "\n", &save))
+            sv_push(&lines, l);
+        ok = 0;
+        for (size_t i = 0; i < lines.n && !ok; i++)
+            for (size_t j = 0; j < rr->signers.n && !ok; j++)
+                ok = !strcasecmp(lines.v[i], rr->signers.v[j]);
+        sv_free(&lines);
+    }
+    free(out);
+    return ok ? 0 : -1;
+}
+
+int recipe_repo_trusted(const reciperepo *rr)
+{
+    if (!rr->require_signed)
+        return 0;
+    if (recipe_repo_verify(rr, "HEAD")) {
+        warnf("%s: HEAD of %s is not signed by a trusted key; refusing to build from it", rr->name, rr->path);
+        return -1;
+    }
+    char *out = NULL;
+    char *argv[] = { "git", "-C", rr->path, "status", "--porcelain", "--untracked-files=all", NULL };
+    int rc = run_capture(argv, &out);
+    int clean = rc == 0 && out && !*out;
+    free(out);
+    if (!clean) {
+        warnf("%s: %s has changes no signed commit covers (git status); refusing to build from it",
+              rr->name, rr->path);
+        return -1;
+    }
     return 0;
 }

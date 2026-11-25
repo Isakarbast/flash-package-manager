@@ -46,3 +46,4 @@ path = /var/db/fpm/recipes/main
 # git = https://git.example.org/recipes.git
 # review = yes
 # require_signed = yes
+# signers = FINGERPRINT...   # with require_signed: only these keys may sign
