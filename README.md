@@ -84,7 +84,7 @@ key = /etc/fpm/keys/main.pub
 [recipes community]                           # recipe repository (AUR style)
 path = /var/db/fpm/recipes/community
 git  = https://git.example.org/recipes.git    # fpm sync clones / pulls it
-review = yes                                  # show new or changed recipes before building
+review = yes                                  # show new or changed recipes before building or installing
 require_signed = yes                          # only signed commits are synced or built
 signers = 3AA5C34371567BD2...                 # optional: key fingerprints allowed to sign
 ```
@@ -93,6 +93,11 @@ Packaging policy: `usrmerge = yes` moves files a build put in `/bin`, `/sbin`,
 `/lib`, `/lib64` or `/usr/sbin` into `/usr/bin` and `/usr/lib` (for systems
 where those are symlinks), and `purge = GLOB...` deletes generated clutter from
 every package (default `usr/share/info/dir`; e.g. add `*.la`).
+
+With `review = yes`, every file in a recipe's directory (patches and local
+sources included) is shown the first time you build it, and after that only a
+diff against the copy you approved; `fpm install`, `upgrade` and `build` all
+ask before building.
 
 Repositories are searched in order; the first one that has a package wins. When
 both a binary and a recipe exist, the newer version wins (`prefer` breaks ties).

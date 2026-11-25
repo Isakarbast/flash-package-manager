@@ -3,6 +3,7 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -129,39 +130,106 @@ static void human(long long bytes, char *buf, size_t len)
 
 /* ---- AUR-style review of recipes from repositories with review = yes ---- */
 
+/* Every file in a recipe directory (relative paths, sorted), except .git:
+ * patches and local sources run as much as the build script does. */
+static void recipe_files_in(const char *top, const char *rel, strvec *out)
+{
+    char *dir = *rel ? xasprintf("%s/%s", top, rel) : xstrdup(top);
+    DIR *d = opendir(dir);
+    struct dirent *e;
+    while (d && (e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..") || !strcmp(e->d_name, ".git"))
+            continue;
+        char *r = *rel ? xasprintf("%s/%s", rel, e->d_name) : xstrdup(e->d_name);
+        char *p = xasprintf("%s/%s", top, r);
+        struct stat st;
+        if (lstat(p, &st) == 0 && S_ISDIR(st.st_mode))
+            recipe_files_in(top, r, out);
+        else
+            sv_push(out, r);
+        free(p);
+        free(r);
+    }
+    if (d)
+        closedir(d);
+    free(dir);
+}
+
+static void recipe_files(const recipe *r, strvec *out)
+{
+    recipe_files_in(r->dir, "", out);
+    sv_sort(out);
+}
+
 static char *recipe_digest(const recipe *r)
 {
-    static const char *files[] = { "recipe", "build", "post-install", "pre-remove", NULL };
-    strvec parts = {0};
-    for (int i = 0; files[i]; i++) {
-        char *p = xasprintf("%s/%s", r->dir, files[i]);
-        char h[65] = "-";
-        if (path_exists(p))
-            sha256_file(p, h);
-        sv_push(&parts, h);
+    strvec files = {0}, parts = {0};
+    recipe_files(r, &files);
+    for (size_t i = 0; i < files.n; i++) {
+        char *p = xasprintf("%s/%s", r->dir, files.v[i]);
+        char h[65] = "-", link[PATH_MAX] = "";
+        ssize_t n = readlink(p, link, sizeof link - 1);
+        if (n >= 0)
+            link[n] = 0;
+        sha256_file(p, h);   /* a symlink counts by its target's content too */
+        sv_push_own(&parts, xasprintf("%s %s%s%s", h, files.v[i], n >= 0 ? " -> " : "", link));
         free(p);
     }
-    char *s = sv_join(&parts, " ");
+    char *s = sv_join(&parts, "\n");
     sv_free(&parts);
+    sv_free(&files);
     return s;
 }
 
 static void print_recipe_files(const recipe *r)
 {
-    static const char *files[] = { "recipe", "build", "post-install", "pre-remove", NULL };
-    for (int i = 0; files[i]; i++) {
-        char *p = xasprintf("%s/%s", r->dir, files[i]);
-        char *text = read_file(p, NULL);
-        if (text)
-            printf("\n----- %s -----\n%s", p, text);
+    strvec files = {0};
+    recipe_files(r, &files);
+    for (size_t i = 0; i < files.n; i++) {
+        char *p = xasprintf("%s/%s", r->dir, files.v[i]);
+        size_t len = 0;
+        char *text = read_file(p, &len);
+        char link[PATH_MAX];
+        ssize_t n = readlink(p, link, sizeof link - 1);
+        if (n >= 0) {
+            link[n] = 0;
+            printf("\n----- %s -> %s -----\n", p, link);
+        } else {
+            printf("\n----- %s -----\n", p);
+        }
+        if (text && memchr(text, 0, len))
+            printf("(binary file, %zu bytes)\n", len);
+        else if (text)
+            fputs(text, stdout);
         free(text);
         free(p);
     }
     printf("\n");
+    sv_free(&files);
+}
+
+/* A copy of what was approved, so a later review can show just the changes. */
+static void save_snapshot(const recipe *r, const char *snap)
+{
+    rm_rf(snap);
+    strvec files = {0};
+    recipe_files(r, &files);
+    for (size_t i = 0; i < files.n; i++) {
+        char *src = xasprintf("%s/%s", r->dir, files.v[i]), *dst = xasprintf("%s/%s", snap, files.v[i]);
+        char *parent = xstrdup(dst);
+        *strrchr(parent, '/') = 0;
+        if (mkdir_p(parent, 0755) || copy_file(src, dst, 0644))
+            warnf("cannot save the reviewed copy of %s", src);
+        free(parent);
+        free(src);
+        free(dst);
+    }
+    sv_free(&files);
 }
 
 /* Recipes from review repositories that are new or changed since you last
- * approved them are shown before anything is built. */
+ * approved them are shown (all files, or a diff against the approved copy)
+ * before anything is built. */
 static int review(job *jobs, size_t n)
 {
     strvec seen = {0};
@@ -176,10 +244,17 @@ static int review(job *jobs, size_t n)
             continue;
         char *digest = recipe_digest(&j->x.r);
         char *path = xasprintf("%s/reviewed/%s", C.db, j->x.r.name);
+        char *snap = xasprintf("%s/reviewed/%s.d", C.db, j->x.r.name);
         char *prev = read_file(path, NULL);
         if (!prev || strcmp(prev, digest)) {
             step("%s comes from '%s', which asks you to review its recipes", j->x.r.name, rr->name);
-            print_recipe_files(&j->x.r);
+            if (prev && is_dir(snap) && have_program("diff")) {
+                printf("Changes since you last approved it:\n");
+                char *argv[] = { "diff", "-ruN", "-x", ".git", snap, j->x.r.dir, NULL };
+                run(argv, NULL, NULL);
+            } else {
+                print_recipe_files(&j->x.r);
+            }
             if (!C.yes && !isatty(0)) {
                 warnf("not reviewed: run interactively or pass --yes");
                 ok = 0;
@@ -189,11 +264,13 @@ static int review(job *jobs, size_t n)
                 char *dir = xasprintf("%s/reviewed", C.db);
                 mkdir_p(dir, 0755);
                 free(dir);
+                save_snapshot(&j->x.r, snap);
                 write_file_atomic(path, digest, strlen(digest));
             }
         }
         free(prev);
         free(path);
+        free(snap);
         free(digest);
     }
     sv_free(&seen);
@@ -334,6 +411,11 @@ static int cmd_build(char **args, size_t n)
     C.source_only = src;
     for (size_t i = 0; i < order.n; i++)
         sv_free(&jobs[i].wait);   /* dependencies are the caller's job here */
+    if (!review(jobs, order.n)) {
+        jobs_free(jobs, order.n);
+        sv_free(&order);
+        return 1;
+    }
     failed |= jobs_run(&C, jobs, order.n, NULL);
     jobs_free(jobs, order.n);
     sv_free(&order);

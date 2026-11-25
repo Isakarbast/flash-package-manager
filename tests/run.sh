@@ -290,6 +290,19 @@ check "it was installed"                  test -f "$RV/usr/share/reviewed/ok"
 check "unchanged recipe needs no review"  rv --reinstall install reviewed
 echo 'echo changed' >> "$T/review-repo/reviewed/build"
 has   "changed recipe must be reviewed again" "not reviewed" rv --reinstall --rebuild install reviewed
+has   "the review shows only what changed"  "^+echo changed" rv --yes --reinstall --rebuild install reviewed
+echo 'harmless' > "$T/review-repo/reviewed/fix.patch"
+has   "a new local file must be reviewed"   "not reviewed" rv --reinstall --rebuild install reviewed
+has   "and its content is shown"            "^+harmless" rv --yes --reinstall --rebuild install reviewed
+echo 'touch /tmp/evil' > "$T/review-repo/reviewed/fix.patch"
+has   "a changed local file must be reviewed" "not reviewed" rv --reinstall --rebuild install reviewed
+has   "fpm build reviews too"               "not reviewed" rv --rebuild build reviewed
+mkdir -p "$T/review-repo/fresh"
+printf 'name = fresh\nversion = 1\n' > "$T/review-repo/fresh/recipe"
+printf 'mkdir -p "$DESTDIR/usr/share/fresh"\n' > "$T/review-repo/fresh/build"
+has   "fpm build refuses an unreviewed recipe" "not reviewed" rv build fresh
+refuse "and built nothing"                  test -e "$RV/var/cache/fpm/pkgs/fresh-1-1.fpm.tar.zst"
+check  "show prints every file"             sh -c "\"$FPM_BIN\" --root '$RV' --config '$T/review.conf' show reviewed | grep -q 'fix.patch'"
 
 echo "untracked files"
 RO=$T/overwrite-root
