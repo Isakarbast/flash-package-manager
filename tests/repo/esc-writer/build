@@ -1,0 +1,2 @@
+mkdir -p "$DESTDIR/opt/esc"
+echo inside > "$DESTDIR/opt/esc/file"

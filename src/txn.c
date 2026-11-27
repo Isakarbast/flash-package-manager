@@ -21,6 +21,7 @@
 strvec txn_changed;
 strvec txn_plan;
 int txn_may_defer;
+hmap txn_next;
 
 /* ---- ownership index ---- */
 
@@ -79,6 +80,16 @@ void owners_free(owners *o)
 
 /* ---- helpers ---- */
 
+/* Is rel a directory, following a final symlink inside the root? */
+static int is_dir_in(const config *c, const char *rel)
+{
+    char *rel_dot = xasprintf("%s/.", rel), *p = tpath(c, rel_dot);
+    int d = is_dir(p);
+    free(p);
+    free(rel_dot);
+    return d;
+}
+
 static int is_config(const char *rel)
 {
     return starts_with(rel, "etc/");
@@ -114,7 +125,7 @@ static int place(const char *src, const char *dst)
 /* Remove one manifest entry from disk, respecting other owners and edited configs. */
 static void remove_entry(const config *c, const owners *o, const char *name, const mentry *e)
 {
-    char *dst = rpath(c, e->path);
+    char *dst = tpath(c, e->path);
     if (e->type == 'd') {
         if ((intptr_t)hm_get(&o->dirs, e->path) <= 1)
             rmdir(dst);   /* only succeeds when empty */
@@ -257,18 +268,60 @@ static int check_shlibs(const config *c, const pkg *p, const pkg *old)
     return bad;
 }
 
-/* Files owned by a package this one replaces may be taken over. */
+/* Paths in an archive (cached per archive for this run). */
+static const hmap *archive_paths(const char *archive)
+{
+    static hmap lists;   /* archive -> hmap of paths */
+    hmap *l = hm_get(&lists, archive);
+    if (l)
+        return l;
+    l = calloc(1, sizeof *l);
+    if (!l)
+        die("out of memory");
+    char *out = NULL;
+    char *argv[] = { "tar", "-tf", (char *)archive, NULL };
+    if (run_capture(argv, &out) == 0)
+        for (char *save = NULL, *s = strtok_r(out, "\n", &save); s; s = strtok_r(NULL, "\n", &save)) {
+            while (s[0] == '.' && s[1] == '/')
+                s += 2;
+            size_t n = strlen(s);
+            while (n && s[n - 1] == '/')
+                s[--n] = 0;
+            if (n)
+                hm_put(l, s, (void *)1);
+        }
+    free(out);
+    hm_put(&lists, archive, l);
+    return l;
+}
+
+/* May path move from own to another package in this transaction? Yes when own
+ * is being upgraded or removed by it and the version it gets doesn't ship the
+ * path (a file split into a new package). When own's next archive isn't built
+ * yet, the move is allowed and checked when own itself is installed. */
+static int handed_over(const char *own, const char *path)
+{
+    if (!sv_contains(&txn_plan, own))
+        return 0;
+    const char *next = hm_get(&txn_next, own);
+    if (!next || !path_exists(next))
+        return 1;
+    return hm_get(archive_paths(next), path) == NULL;
+}
+
+/* Files owned by a package this one replaces may be taken over, and so may
+ * files another package of this transaction stops shipping. */
 static int check_conflicts(const config *c, const owners *o, const pkg *p, const manifest *m)
 {
     const char *name = p->name;
     int n = 0;
     for (size_t i = 0; i < m->n; i++) {
         const mentry *e = &m->e[i];
-        char *dst = rpath(c, e->path);
+        char *dst = tpath(c, e->path);
         struct stat st;
         int exists = lstat(dst, &st) == 0;
         if (e->type == 'd') {
-            if (exists && !S_ISDIR(st.st_mode) && !is_dir(dst)) {
+            if (exists && !S_ISDIR(st.st_mode) && !is_dir_in(c, e->path)) {
                 warnf("conflict: %s exists and is not a directory", dst);
                 n++;
             }
@@ -277,7 +330,8 @@ static int check_conflicts(const config *c, const owners *o, const pkg *p, const
             if (exists && S_ISDIR(st.st_mode)) {
                 warnf("conflict: %s is a directory", dst);
                 n++;
-            } else if (own && strcmp(own, name) && !sv_contains(&p->replaces, own)) {
+            } else if (own && strcmp(own, name) && !sv_contains(&p->replaces, own) &&
+                       !handed_over(own, e->path)) {
                 warnf("conflict: %s is owned by %s", dst, own);
                 n++;
             } else if (!own && exists && !is_config(e->path) && !c->overwrite) {
@@ -313,11 +367,11 @@ static int run_in_target(const config *c, const char *rel)
 static int run_script(const config *c, const char *script)
 {
     if (in_target(c)) {
-        char *dir = rpath(c, "var/tmp");
+        char *dir = tpath(c, "var/tmp/.");
         mkdir_p(dir, 0755);
         chmod(dir, 01777);
         char *rel = xasprintf("var/tmp/fpm-script.%d", (int)getpid());
-        char *dst = rpath(c, rel);
+        char *dst = tpath(c, rel);
         int rc = copy_file(script, dst, 0700) ? -1 : run_in_target(c, rel);
         unlink(dst);
         free(dst);
@@ -340,10 +394,10 @@ static strvec deferred_scripts;
 
 static void defer_script(const config *c, const char *name, const char *script)
 {
-    char *dir = rpath(c, "var/tmp/fpm-post");
+    char *dir = tpath(c, "var/tmp/fpm-post/.");
     mkdir_p(dir, 0700);
     char *rel = xasprintf("var/tmp/fpm-post/%04zu-%s", deferred_scripts.n, name);
-    char *dst = rpath(c, rel);
+    char *dst = tpath(c, rel);
     if (copy_file(script, dst, 0700))
         warnf("%s: cannot save its post-install script", name);
     else
@@ -360,12 +414,12 @@ void txn_run_deferred(const config *c)
         *rel++ = 0;
         if (run_in_target(c, rel))
             warnf("%s: post-install script failed", name);
-        char *p = rpath(c, rel);
+        char *p = tpath(c, rel);
         unlink(p);
         free(p);
     }
     if (deferred_scripts.n) {
-        char *dir = rpath(c, "var/tmp/fpm-post");
+        char *dir = tpath(c, "var/tmp/fpm-post/.");
         rmdir(dir);
         free(dir);
     }
@@ -439,11 +493,11 @@ int txn_install(const config *c, owners *o, const char *archive, int mark_explic
     for (size_t i = 0; i < nm.n; i++) {
         const mentry *e = &nm.e[i];
         char *src = xasprintf("%s/%s", stage, e->path);
-        char *dst = rpath(c, e->path);
+        char *dst = tpath(c, e->path);
         struct stat st;
         lstat(src, &st);
         if (e->type == 'd') {
-            if (!is_dir(dst)) {
+            if (!is_dir_in(c, e->path)) {
                 if (path_exists(dst))
                     unlink(dst);   /* only reachable with --force */
                 if (mkdir(dst, st.st_mode & 07777) && errno != EEXIST) {
@@ -482,6 +536,23 @@ int txn_install(const config *c, owners *o, const char *archive, int mark_explic
     if (getenv("FPM_TEST_INTERRUPT"))
         _exit(99);
 
+    /* Files this package took over from others leave their file lists, so
+     * the database never lists one path under two packages. */
+    hmap taken = {0};   /* previous owner -> strvec of paths */
+    for (size_t i = 0; i < nm.n; i++) {
+        const char *own = nm.e[i].type == 'd' ? NULL : hm_get(&o->files, nm.e[i].path);
+        if (!own || !strcmp(own, p.name))
+            continue;
+        strvec *v = hm_get(&taken, own);
+        if (!v) {
+            v = calloc(1, sizeof *v);
+            if (!v)
+                die("out of memory");
+            hm_put(&taken, own, v);
+        }
+        sv_push(v, nm.e[i].path);
+    }
+
     if (had)
         for (size_t i = om.n; i-- > 0;)
             if (!manifest_find(&nm, om.e[i].path))
@@ -494,6 +565,15 @@ int txn_install(const config *c, owners *o, const char *archive, int mark_explic
         warnf("cannot write database entry for %s", p.name);
         errors++;
     }
+    for (size_t i = 0; i < taken.cap; i++) {
+        if (!taken.t[i].val)
+            continue;
+        if (db_disown(c, taken.t[i].key, taken.t[i].val))
+            warnf("cannot update the file list of %s", taken.t[i].key);
+        sv_free(taken.t[i].val);
+        free(taken.t[i].val);
+    }
+    hm_free(&taken, NULL);
     /* Keep the pre-remove script (if any) for when the package is removed. */
     char *rm_src = xasprintf("%s/.fpmremove", stage);
     char *rm_dst = xasprintf("%s/installed/%s/pre-remove", c->db, p.name);

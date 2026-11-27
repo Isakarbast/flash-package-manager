@@ -290,6 +290,19 @@ check "it was installed"                  test -f "$RV/usr/share/reviewed/ok"
 check "unchanged recipe needs no review"  rv --reinstall install reviewed
 echo 'echo changed' >> "$T/review-repo/reviewed/build"
 has   "changed recipe must be reviewed again" "not reviewed" rv --reinstall --rebuild install reviewed
+has   "the review shows only what changed"  "^+echo changed" rv --yes --reinstall --rebuild install reviewed
+echo 'harmless' > "$T/review-repo/reviewed/fix.patch"
+has   "a new local file must be reviewed"   "not reviewed" rv --reinstall --rebuild install reviewed
+has   "and its content is shown"            "^+harmless" rv --yes --reinstall --rebuild install reviewed
+echo 'touch /tmp/evil' > "$T/review-repo/reviewed/fix.patch"
+has   "a changed local file must be reviewed" "not reviewed" rv --reinstall --rebuild install reviewed
+has   "fpm build reviews too"               "not reviewed" rv --rebuild build reviewed
+mkdir -p "$T/review-repo/fresh"
+printf 'name = fresh\nversion = 1\n' > "$T/review-repo/fresh/recipe"
+printf 'mkdir -p "$DESTDIR/usr/share/fresh"\n' > "$T/review-repo/fresh/build"
+has   "fpm build refuses an unreviewed recipe" "not reviewed" rv build fresh
+refuse "and built nothing"                  test -e "$RV/var/cache/fpm/pkgs/fresh-1-1.fpm.tar.zst"
+check  "show prints every file"             sh -c "\"$FPM_BIN\" --root '$RV' --config '$T/review.conf' show reviewed | grep -q 'fix.patch'"
 
 echo "untracked files"
 RO=$T/overwrite-root
@@ -331,6 +344,78 @@ check  "a package may ship /bin as a symlink" "$FPM_BIN" --root "$RL" --config "
 check  "and it is installed"                 test -L "$RL/bin"
 check  "a new directory gets the package's mode despite the umask" \
     sh -c "[ \"\$(stat -c %a '$RL/tmp')\" = 1777 ]"
+
+echo "signed recipe repositories"
+SG=$T/signed-up SL=$T/signed-local RS=$T/signed-root
+mkdir -p "$SG/sgn" "$RS"
+gitq() { git -C "$SG" -c user.email=t@example.org -c user.name=t "$@" >/dev/null 2>&1; }
+git init -q "$SG"
+printf 'name = sgn\nversion = 1\n' > "$SG/sgn/recipe"
+printf 'mkdir -p "$DESTDIR/usr/share/sgn"\necho v1 > "$DESTDIR/usr/share/sgn/v"\n' > "$SG/sgn/build"
+gitq add -A; gitq commit -m unsigned
+signed_conf() {
+    printf 'shlib_ignore = libc.so.6\n[recipes sgn]\npath = %s\ngit = %s\nrequire_signed = yes\n%s\n' \
+        "$SL" "$SG" "$1" > "$T/signed.conf"
+}
+sg() { "$FPM_BIN" --root "$RS" --config "$T/signed.conf" "$@"; }
+signed_conf ""
+refuse "sync refuses an unsigned clone"     sg sync
+refuse "so nothing was checked out"         test -e "$SL/sgn/recipe"
+refuse "and it can't be installed"          sg -y install sgn
+git clone -q "$SG" "$SL"
+refuse "an unsigned checkout already there isn't built" sg -y install sgn
+rm -rf "$SL"
+if command -v gpg >/dev/null 2>&1; then
+    export GNUPGHOME=$T/gnupg
+    mkdir -p "$GNUPGHOME"; chmod 700 "$GNUPGHOME"
+    gpg --batch --passphrase '' --quick-gen-key 'fpm test <t@example.org>' ed25519 sign never >/dev/null 2>&1
+    FPR=$(gpg --batch --with-colons --list-keys t@example.org 2>/dev/null | awk -F: '/^fpr/ { print $10; exit }')
+    gitq -c user.signingkey="$FPR" commit --allow-empty -S -m signed
+    signed_conf "signers = $FPR"
+    check  "sync accepts a commit signed by a listed key" sg sync
+    check  "install from it"                  sg -y install sgn
+    printf 'mkdir -p "$DESTDIR/usr/share/sgn"\necho v2 > "$DESTDIR/usr/share/sgn/v"\n' > "$SG/sgn/build"
+    sed -i 's/^version = 1/version = 2/' "$SG/sgn/recipe"
+    gitq commit -am 'unsigned update'
+    refuse "sync refuses an unsigned update"  sg sync
+    check  "the checkout stayed at the signed commit" grep -q 'version = 1' "$SL/sgn/recipe"
+    echo 'touch /tmp/x' >> "$SL/sgn/build"
+    refuse "a local edit to a signed checkout isn't built" sg -y --reinstall --rebuild install sgn
+    git -C "$SL" checkout -q -- .
+    check  "the clean signed checkout still builds" sg -y --reinstall --rebuild install sgn
+    signed_conf "signers = 0000000000000000000000000000000000000000"
+    refuse "a key not in signers is refused"  sg -y --reinstall --rebuild install sgn
+    unset GNUPGHOME
+else
+    echo "  skip  (no gpg)"
+fi
+
+echo "files moving between packages"
+RF=$T/move-root
+mkdir -p "$RF" "$T/repo/mover" "$T/repo/mover-data"
+mv_recipe() { printf 'name = %s\nversion = %s\n%s\n' "$1" "$2" "$3" > "$T/repo/$1/recipe"; printf '%s\n' "$4" > "$T/repo/$1/build"; }
+mvf() { "$FPM_BIN" --root "$RF" --config "$T/fpm.conf" -y "$@"; }
+mv_recipe mover 1 "" 'mkdir -p "$DESTDIR/usr/share/mover"; echo bin > "$DESTDIR/usr/share/mover/bin"; echo d1 > "$DESTDIR/usr/share/mover/data"'
+check  "install mover 1"                    mvf install mover
+mv_recipe mover 2 "depends = mover-data" 'mkdir -p "$DESTDIR/usr/share/mover"; echo bin > "$DESTDIR/usr/share/mover/bin"'
+mv_recipe mover-data 2 "" 'mkdir -p "$DESTDIR/usr/share/mover"; echo d2 > "$DESTDIR/usr/share/mover/data"'
+check  "upgrade splits a file into a new dependency" mvf upgrade
+check  "the file has the new content"       grep -q d2 "$RF/usr/share/mover/data"
+has    "it belongs to mover-data"           "owned by mover-data" "$FPM_BIN" --root "$RF" --config "$T/fpm.conf" owner /usr/share/mover/data
+refuse "and is gone from mover's file list" grep -q 'usr/share/mover/data$' "$RF/var/lib/fpm/installed/mover/files"
+mv_recipe mover 3 "depends = mover-data" 'mkdir -p "$DESTDIR/usr/share/mover"; echo bin > "$DESTDIR/usr/share/mover/bin"; echo d3 > "$DESTDIR/usr/share/mover/data"'
+mv_recipe mover-data 3 "" 'mkdir -p "$DESTDIR/usr/share/mover"; echo d3 > "$DESTDIR/usr/share/mover/data"'
+has    "two packages shipping it is still a conflict" "is owned by mover-data" mvf upgrade
+check  "removing mover keeps mover-data's file" sh -c "\"$FPM_BIN\" --root '$RF' --config '$T/fpm.conf' -y -f remove mover >/dev/null 2>&1 && test -f '$RF/usr/share/mover/data'"
+
+echo "symlinks stay inside --root"
+RE=$T/esc-root
+mkdir -p "$RE"
+check  "install a package with an absolute directory symlink" "$FPM_BIN" --root "$RE" --config "$T/fpm.conf" install esc-link
+check  "write through it"                    "$FPM_BIN" --root "$RE" --config "$T/fpm.conf" install esc-writer
+check  "the file landed inside the root"     test -f "$RE/opt/fpm-esc-real/file"
+refuse "and not on the host"                 test -e /opt/fpm-esc-real/file
+check  "removing it cleans up inside the root" sh -c "\"$FPM_BIN\" --root '$RE' --config '$T/fpm.conf' -y remove esc-writer >/dev/null 2>&1 && test ! -e '$RE/opt/fpm-esc-real/file'"
 
 echo "libraries without a soname"
 RN=$T/nosoname-root

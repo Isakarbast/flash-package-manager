@@ -87,7 +87,8 @@ typedef struct {
 
 typedef struct {
     char *name, *path, *git;
-    int require_signed;       /* sync refuses an unsigned git HEAD */
+    int require_signed;       /* only signed commits are synced and built */
+    strvec signers;           /* with require_signed: key fingerprints allowed to sign */
     int review;               /* show recipe + build script before building (AUR style) */
 } reciperepo;
 
@@ -110,7 +111,13 @@ typedef struct {
 
 void config_load(config *c, int conf_given);
 char *rpath(const config *c, const char *rel);
+/* rpath with symlinks resolved inside the root (never escapes it); see config.c. */
+char *tpath(const config *c, const char *rel);
 const reciperepo *recipe_repo_of(const config *c, const char *recipe_dir);
+/* Is commit rev of a require_signed recipe repository signed by a trusted key? 0 = yes. */
+int recipe_repo_verify(const reciperepo *rr, const char *rev);
+/* Before building from it: HEAD verifies and the checkout has no local changes. 0 = ok. */
+int recipe_repo_trusted(const reciperepo *rr);
 
 /* ---- recipe.c ---- */
 
@@ -174,6 +181,8 @@ int  db_get(const config *c, const char *name, pkg *p);
 void db_list(const config *c, strvec *names);
 int  db_put(const config *c, const pkg *p, const manifest *m);
 int  db_drop(const config *c, const char *name);
+/* Drop paths from an installed package's file list (another package took them over). */
+int  db_disown(const config *c, const char *name, const strvec *paths);
 void db_lock(const config *c);
 int  db_held(const config *c, const char *name);
 int  db_set_held(const config *c, const char *name, int held);
@@ -239,6 +248,10 @@ extern strvec txn_plan;
  * package whose libraries aren't there yet is deferred (txn_install returns
  * TXN_DEFERRED) instead of refused, since one of them may provide them. */
 extern int txn_may_defer;
+/* Package name -> archive the current command will install for it (set by the
+ * caller). A file may move to another package when its owner is in txn_plan
+ * and the owner's next archive (if known yet) no longer ships it. */
+extern hmap txn_next;
 #define TXN_DEFERRED 2
 
 void owners_load(const config *c, owners *o);

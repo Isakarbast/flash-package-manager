@@ -24,6 +24,66 @@ char *rpath(const config *c, const char *rel)
     return xasprintf("%s/%s", c->root, rel);
 }
 
+/* Like rpath, but symlinks along the way are resolved the way the target
+ * system itself would see them: an absolute link is relative to the root and
+ * ".." stops at it. With --root, the kernel would otherwise follow a link like
+ * opt/x -> /etc on the host, and a package could write outside the target.
+ * The last component is not followed (it may itself be a link the package
+ * replaces); add "/." to follow it too. */
+char *tpath(const config *c, const char *rel)
+{
+    if (!strcmp(c->root, "/"))
+        return rpath(c, rel);
+    size_t rl = strlen(c->root);
+    char *cur = xstrdup(c->root);          /* resolved so far, always under the root */
+    char *rest = xstrdup(rel);             /* components still to walk */
+    int hops = 0;
+    for (;;) {
+        char *p = rest;
+        while (*p == '/')
+            p++;
+        if (!*p)
+            break;
+        char *slash = strchr(p, '/');
+        char *comp = slash ? strndup(p, (size_t)(slash - p)) : xstrdup(p);
+        char *tail = xstrdup(slash ? slash : "");
+        free(rest);
+        rest = tail;
+        if (!strcmp(comp, ".")) {
+            free(comp);
+            continue;
+        }
+        if (!strcmp(comp, "..")) {
+            char *up = strrchr(cur, '/');
+            if (up && (size_t)(up - cur) >= rl)
+                *up = 0;
+            free(comp);
+            continue;
+        }
+        char *next = xasprintf("%s/%s", cur, comp);
+        free(comp);
+        int last = !rest[strspn(rest, "/")];
+        char target[PATH_MAX];
+        ssize_t n = last ? -1 : readlink(next, target, sizeof target - 1);
+        if (n < 0) {
+            free(cur);
+            cur = next;
+            continue;
+        }
+        free(next);
+        if (++hops > 40)
+            die("too many symbolic links resolving /%s inside %s", rel, c->root);
+        target[n] = 0;
+        if (target[0] == '/')
+            cur[rl] = 0;                    /* absolute: back to the root */
+        char *more = xasprintf("%s%s", target, rest);
+        free(rest);
+        rest = more;
+    }
+    free(rest);
+    return cur;
+}
+
 const reciperepo *recipe_repo_of(const config *c, const char *recipe_dir)
 {
     for (size_t i = 0; i < c->nrrepos; i++) {
@@ -138,6 +198,8 @@ static void recipes_kv(config *c, reciperepo *r, const char *k, const char *v)
         set(&r->git, v);
     else if (!strcmp(k, "require_signed"))
         r->require_signed = yes(v);
+    else if (!strcmp(k, "signers"))
+        sv_split(&r->signers, v);
     else if (!strcmp(k, "review"))
         r->review = yes(v);
     else
@@ -242,7 +304,7 @@ void config_load(config *c, int conf_given)
         long n = sysconf(_SC_NPROCESSORS_ONLN);
         c->jobs = n > 0 ? (int)n : 1;
     }
-    c->db = rpath(c, "var/lib/fpm");
-    c->cache = rpath(c, "var/cache/fpm");
-    c->tmp = rpath(c, "var/tmp/fpm");
+    c->db = tpath(c, "var/lib/fpm/.");
+    c->cache = tpath(c, "var/cache/fpm/.");
+    c->tmp = tpath(c, "var/tmp/fpm/.");
 }

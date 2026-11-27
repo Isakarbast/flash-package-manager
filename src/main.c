@@ -3,6 +3,7 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -129,39 +130,106 @@ static void human(long long bytes, char *buf, size_t len)
 
 /* ---- AUR-style review of recipes from repositories with review = yes ---- */
 
+/* Every file in a recipe directory (relative paths, sorted), except .git:
+ * patches and local sources run as much as the build script does. */
+static void recipe_files_in(const char *top, const char *rel, strvec *out)
+{
+    char *dir = *rel ? xasprintf("%s/%s", top, rel) : xstrdup(top);
+    DIR *d = opendir(dir);
+    struct dirent *e;
+    while (d && (e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..") || !strcmp(e->d_name, ".git"))
+            continue;
+        char *r = *rel ? xasprintf("%s/%s", rel, e->d_name) : xstrdup(e->d_name);
+        char *p = xasprintf("%s/%s", top, r);
+        struct stat st;
+        if (lstat(p, &st) == 0 && S_ISDIR(st.st_mode))
+            recipe_files_in(top, r, out);
+        else
+            sv_push(out, r);
+        free(p);
+        free(r);
+    }
+    if (d)
+        closedir(d);
+    free(dir);
+}
+
+static void recipe_files(const recipe *r, strvec *out)
+{
+    recipe_files_in(r->dir, "", out);
+    sv_sort(out);
+}
+
 static char *recipe_digest(const recipe *r)
 {
-    static const char *files[] = { "recipe", "build", "post-install", "pre-remove", NULL };
-    strvec parts = {0};
-    for (int i = 0; files[i]; i++) {
-        char *p = xasprintf("%s/%s", r->dir, files[i]);
-        char h[65] = "-";
-        if (path_exists(p))
-            sha256_file(p, h);
-        sv_push(&parts, h);
+    strvec files = {0}, parts = {0};
+    recipe_files(r, &files);
+    for (size_t i = 0; i < files.n; i++) {
+        char *p = xasprintf("%s/%s", r->dir, files.v[i]);
+        char h[65] = "-", link[PATH_MAX] = "";
+        ssize_t n = readlink(p, link, sizeof link - 1);
+        if (n >= 0)
+            link[n] = 0;
+        sha256_file(p, h);   /* a symlink counts by its target's content too */
+        sv_push_own(&parts, xasprintf("%s %s%s%s", h, files.v[i], n >= 0 ? " -> " : "", link));
         free(p);
     }
-    char *s = sv_join(&parts, " ");
+    char *s = sv_join(&parts, "\n");
     sv_free(&parts);
+    sv_free(&files);
     return s;
 }
 
 static void print_recipe_files(const recipe *r)
 {
-    static const char *files[] = { "recipe", "build", "post-install", "pre-remove", NULL };
-    for (int i = 0; files[i]; i++) {
-        char *p = xasprintf("%s/%s", r->dir, files[i]);
-        char *text = read_file(p, NULL);
-        if (text)
-            printf("\n----- %s -----\n%s", p, text);
+    strvec files = {0};
+    recipe_files(r, &files);
+    for (size_t i = 0; i < files.n; i++) {
+        char *p = xasprintf("%s/%s", r->dir, files.v[i]);
+        size_t len = 0;
+        char *text = read_file(p, &len);
+        char link[PATH_MAX];
+        ssize_t n = readlink(p, link, sizeof link - 1);
+        if (n >= 0) {
+            link[n] = 0;
+            printf("\n----- %s -> %s -----\n", p, link);
+        } else {
+            printf("\n----- %s -----\n", p);
+        }
+        if (text && memchr(text, 0, len))
+            printf("(binary file, %zu bytes)\n", len);
+        else if (text)
+            fputs(text, stdout);
         free(text);
         free(p);
     }
     printf("\n");
+    sv_free(&files);
+}
+
+/* A copy of what was approved, so a later review can show just the changes. */
+static void save_snapshot(const recipe *r, const char *snap)
+{
+    rm_rf(snap);
+    strvec files = {0};
+    recipe_files(r, &files);
+    for (size_t i = 0; i < files.n; i++) {
+        char *src = xasprintf("%s/%s", r->dir, files.v[i]), *dst = xasprintf("%s/%s", snap, files.v[i]);
+        char *parent = xstrdup(dst);
+        *strrchr(parent, '/') = 0;
+        if (mkdir_p(parent, 0755) || copy_file(src, dst, 0644))
+            warnf("cannot save the reviewed copy of %s", src);
+        free(parent);
+        free(src);
+        free(dst);
+    }
+    sv_free(&files);
 }
 
 /* Recipes from review repositories that are new or changed since you last
- * approved them are shown before anything is built. */
+ * approved them are shown (all files, or a diff against the approved copy)
+ * before anything is built. */
 static int review(job *jobs, size_t n)
 {
     strvec seen = {0};
@@ -176,10 +244,17 @@ static int review(job *jobs, size_t n)
             continue;
         char *digest = recipe_digest(&j->x.r);
         char *path = xasprintf("%s/reviewed/%s", C.db, j->x.r.name);
+        char *snap = xasprintf("%s/reviewed/%s.d", C.db, j->x.r.name);
         char *prev = read_file(path, NULL);
         if (!prev || strcmp(prev, digest)) {
             step("%s comes from '%s', which asks you to review its recipes", j->x.r.name, rr->name);
-            print_recipe_files(&j->x.r);
+            if (prev && is_dir(snap) && have_program("diff")) {
+                printf("Changes since you last approved it:\n");
+                char *argv[] = { "diff", "-ruN", "-x", ".git", snap, j->x.r.dir, NULL };
+                run(argv, NULL, NULL);
+            } else {
+                print_recipe_files(&j->x.r);
+            }
             if (!C.yes && !isatty(0)) {
                 warnf("not reviewed: run interactively or pass --yes");
                 ok = 0;
@@ -189,11 +264,13 @@ static int review(job *jobs, size_t n)
                 char *dir = xasprintf("%s/reviewed", C.db);
                 mkdir_p(dir, 0755);
                 free(dir);
+                save_snapshot(&j->x.r, snap);
                 write_file_atomic(path, digest, strlen(digest));
             }
         }
         free(prev);
         free(path);
+        free(snap);
         free(digest);
     }
     sv_free(&seen);
@@ -255,8 +332,10 @@ static int do_install(const strvec *targets, int mark_targets, const char *cmd)
         return C.dry_run ? 0 : 1;
     }
 
-    for (size_t i = 0; i < order.n; i++)
+    for (size_t i = 0; i < order.n; i++) {
         sv_push(&txn_plan, order.v[i]);
+        hm_put(&txn_next, jobs[i].name, archive_path(&C, jobs[i].name, jobs[i].x.version, jobs[i].x.release));
+    }
     for (size_t i = 0; i < removals.n; i++)
         sv_push(&txn_plan, removals.v[i]);
     owners o;
@@ -334,6 +413,11 @@ static int cmd_build(char **args, size_t n)
     C.source_only = src;
     for (size_t i = 0; i < order.n; i++)
         sv_free(&jobs[i].wait);   /* dependencies are the caller's job here */
+    if (!review(jobs, order.n)) {
+        jobs_free(jobs, order.n);
+        sv_free(&order);
+        return 1;
+    }
     failed |= jobs_run(&C, jobs, order.n, NULL);
     jobs_free(jobs, order.n);
     sv_free(&order);
@@ -484,6 +568,7 @@ static int cmd_rollback(const char *arg, const char *cmd)
             }
         }
         sv_push_own(&installs, xasprintf("%s %d", archive, !strcmp(reason, "explicit")));
+        hm_put(&txn_next, name, xstrdup(archive));
         sv_push_own(&shown, xasprintf("%s %s-%d", name, vr, rel));
         sv_push(&txn_plan, name);
         free(archive);
@@ -657,41 +742,62 @@ static int cmd_clean(void)
 
 /* ---- repositories ---- */
 
+/* Recipes from a require_signed repository are only checked out once the
+ * commit verifies: a fresh clone stays unchecked-out, an update is fetched
+ * and fast-forwarded to. Unsigned commits never reach the working tree. */
+static int sync_recipes(const reciperepo *rr)
+{
+    char *git = xasprintf("%s/.git", rr->path);
+    int is_git = path_exists(git);
+    free(git);
+    if (!is_git && !rr->git)
+        return 0;   /* a plain local directory */
+    const char *rev = "HEAD";
+    char *up = NULL;
+    if (!is_git) {
+        step("Cloning recipes %s from %s", rr->name, rr->git);
+        char *argv[] = { "git", "clone", "--quiet", "--no-checkout", rr->git, rr->path, NULL };
+        if (run(argv, NULL, NULL)) {
+            warnf("%s: git clone failed", rr->name);
+            return -1;
+        }
+    } else {
+        step("Syncing recipes %s", rr->name);
+        char *fetch[] = { "git", "-C", rr->path, "fetch", "--quiet", NULL };
+        char *upstream[] = { "git", "-C", rr->path, "rev-parse", "--verify", "--quiet", "@{upstream}", NULL };
+        if (run(fetch, NULL, NULL) || run_capture(upstream, &up) || !up || !*trim(up)) {
+            warnf("%s: git fetch failed", rr->name);
+            free(up);
+            return -1;
+        }
+        rev = trim(up);
+    }
+    if (rr->require_signed && recipe_repo_verify(rr, rev)) {
+        warnf("%s: the new recipes are not signed by a trusted key; keeping what you had", rr->name);
+        if (!is_git)
+            rm_rf(rr->path);   /* nothing trusted was ever checked out */
+        free(up);
+        return -1;
+    }
+    int rc;
+    if (!is_git) {
+        char *argv[] = { "git", "-C", rr->path, "checkout", "--quiet", NULL };
+        rc = run(argv, NULL, NULL);
+    } else {
+        char *argv[] = { "git", "-C", rr->path, "merge", "--ff-only", "--quiet", (char *)rev, NULL };
+        rc = run(argv, NULL, NULL);
+    }
+    if (rc)
+        warnf("%s: cannot update the checkout in %s", rr->name, rr->path);
+    free(up);
+    return rc ? -1 : 0;
+}
+
 static int cmd_sync(void)
 {
     int failed = 0;
-    for (size_t i = 0; i < C.nrrepos; i++) {
-        const reciperepo *rr = &C.rrepos[i];
-        char *git = xasprintf("%s/.git", rr->path);
-        int is_git = path_exists(git);
-        free(git);
-        if (!is_git && rr->git) {
-            step("Cloning recipes %s from %s", rr->name, rr->git);
-            char *argv[] = { "git", "clone", "--quiet", rr->git, rr->path, NULL };
-            if (run(argv, NULL, NULL)) {
-                warnf("%s: git clone failed", rr->name);
-                failed = 1;
-                continue;
-            }
-        } else if (is_git) {
-            step("Syncing recipes %s", rr->name);
-            char *pull[] = { "git", "-C", rr->path, "pull", "--ff-only", "--quiet", NULL };
-            if (run(pull, NULL, NULL)) {
-                warnf("%s: git pull failed", rr->name);
-                failed = 1;
-                continue;
-            }
-        } else {
-            continue;   /* a plain local directory */
-        }
-        if (rr->require_signed) {
-            char *verify[] = { "git", "-C", rr->path, "verify-commit", "HEAD", NULL };
-            if (run(verify, NULL, NULL)) {
-                warnf("%s: HEAD is not signed by a trusted key; do not build from it", rr->name);
-                failed = 1;
-            }
-        }
-    }
+    for (size_t i = 0; i < C.nrrepos; i++)
+        failed |= sync_recipes(&C.rrepos[i]) != 0;
     for (size_t i = 0; i < C.nbrepos; i++)
         failed |= repo_sync(&C, &C.brepos[i]) != 0;
     return failed;
